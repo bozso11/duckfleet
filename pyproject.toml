@@ -1,0 +1,44 @@
+[project]
+name = "duckfleet-workspace"
+version = "0.1.0.dev0"
+description = "uv workspace root for duckfleet (core library + Streamlit UI)"
+requires-python = ">=3.11,<3.14"
+dependencies = []
+
+[tool.uv]
+package = false
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+duckfleet-core = { workspace = true }
+duckfleet-ui = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "duckfleet-core",
+    "duckfleet-ui",
+    "pytest>=8.3",
+    "pytest-timeout>=2.3",
+    "ruff>=0.6",
+]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+extend-exclude = [".venv"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["duckfleet_core", "duckfleet_ui"]
+
+[tool.pytest.ini_options]
+testpaths = [
+    "packages/duckfleet-core/tests",
+    "packages/duckfleet-ui/tests",
+]
+timeout = 300
+addopts = "-ra"

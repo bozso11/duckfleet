@@ -1,0 +1,21 @@
+# Decision log
+
+Short entries: what was decided, why, consequences. Add a new entry to
+change a decision; do not edit the old one beyond marking it superseded.
+
+| ID | Date | Decision | Why | Consequences |
+|---|---|---|---|---|
+| D-001 | 2026-11-04 | Streamlit for the UI, with a UI-free core package | Accepted in the target environment; Streamlit, Plotly, pandas and duckdb are what a weaker implementing LLM gets right most reliably; `st.dataframe` covers most tabular screens | Streamlit reruns the page on every interaction, so state is kept small and heavy work cached or run outside the page. The one condition to switch: interactive plotting of millions of raw points, then Panel + HoloViews/Datashader with the core unchanged |
+| D-002 | 2026-11-04 | Two packages in one uv workspace: `duckfleet-core`, `duckfleet-ui` | Owner asked for the split and for uv; keeps the boundary enforceable by dependency lists | Core cannot import UI libraries; CI installs with `uv sync --all-packages` |
+| D-003 | 2026-11-04 | Per-file JSON profiles are the source of truth; the catalog is a DuckDB file rebuilt from them after every scan | Incremental rescans become trivial (reuse when size and mtime match); the catalog can be queried in-tool; no incremental SQL to get wrong | Catalog build is a full rebuild; fine for hundreds of files. JSON files double as a debugging aid |
+| D-004 | 2026-11-04 | The UI runs the scan as a subprocess and parses JSON-lines progress; v0.1 blocks behind a progress bar | DuckDB allows one writer or many readers on a file, never both, so the UI cannot read a catalog mid-build; a subprocess also sidesteps spawn-under-Streamlit problems on Windows; owner accepted blocking for the first scan | Non-blocking UI and scan cancel are open options (F-SCAN-14, F-SCAN-15) |
+| D-005 | 2026-11-04 | Process pool with `spawn` context on both OSes, `max(1, cpu_count - 2)` workers, DuckDB `threads=1` and a memory cap per worker | Owner asked for all-but-two cores; spawn is the only context that behaves the same on Windows and Linux; one DuckDB thread per worker avoids oversubscription | Workers pay an import cost at start (about a second); acceptable for hundreds of files |
+| D-006 | 2026-11-04 | Read-only everywhere; extension autoload off | Removes a class of risk, simplifies locking, no network access from workers | Encrypted files and anything needing an extension are open options |
+| D-007 | 2026-11-04 | Strict (names + types) and loose (names only) fingerprints; column order ignored; views excluded by default | Matches the owner's default answer to "what is the same structure"; order rarely carries meaning | Type aliases are not normalised in v0.1 (TUNING type-normalization) |
+| D-008 | 2026-11-04 | Run/experiment identity from path tokens, with a documented tuning convention | Owner: a convention exists but is unknown at this stage | `docs/TUNING.md` and `# TUNING(...)` markers; identity query is an open option |
+| D-009 | 2026-11-04 | Cache under the user cache directory (platformdirs), never inside the scanned folder | Owner approved; keeps data folders untouched | Cache location printable with `duckfleet paths` |
+| D-010 | 2026-11-04 | Pydantic v2 for serialised models; platformdirs and psutil as small helpers | Mainstream packages; pydantic removes hand-written JSON round-trip code | Three extra core dependencies, all widely available |
+| D-011 | 2026-11-04 | Discovery does its own header-magic check and rejects anything without it | Verified: DuckDB 1.5.6 opens files with an SQLite header without error, even with autoload off | SQLite files never reach a worker; SQLite as a fleet member is an open option |
+| D-012 | 2026-11-04 | Implementer: Sonnet 5.5 from the detailed plan; Opus-class review at each version's acceptance checklist | Plan pins contracts, verified facts and tests; review catches drift | Each version gets its own `docs/PLAN_vX.md` before implementation |
+| D-013 | 2026-11-04 | Windows and Linux are equal targets; CI matrix on both | Owner's answer to the environment question | No POSIX-only modules; tests spawn helper processes with `sys.executable` |
+| D-014 | 2026-11-04 | No LICENSE file yet | Owner has not chosen one; a public repository without a license is all rights reserved | Open item for the owner |

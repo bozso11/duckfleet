@@ -1,0 +1,47 @@
+# Limits
+
+Every hard and soft limit, its default, where it is configured, and what
+happens beyond it. Numbers marked (TBC) are proposals until v0.1
+acceptance confirms them on real data.
+
+Last updated: 2026-11-04.
+
+| ID | Limit | Default | Config | Beyond the limit | Since |
+|---|---|---|---|---|---|
+| L-01 | Files discovered per root | 1,000 (TBC) | `ScanConfig.max_files`, `--max-files` | walk stops, `truncated=True`, warning in UI and report | v0.1 |
+| L-02 | Worker processes | `max(1, cpu_count - 2)` | `ScanConfig.workers`, `--workers` | user choice; more workers than cores oversubscribes | v0.1 |
+| L-03 | DuckDB threads per worker | 1 | `ScanConfig.worker_threads` | parallelism comes from the process count | v0.1 |
+| L-04 | Memory limit per worker | `min(2048 MB, total_ram / 2 / workers)`, floor 256 MB (TBC) | `ScanConfig.worker_memory_limit_mb` | DuckDB spills or fails the query; the file is recorded as error | v0.1 |
+| L-05 | Full column stats | tables up to 20 M rows (TBC) | `ScanConfig.stats_row_threshold` | non-temporal stats on a sample, `sampled=True` | v0.1 |
+| L-06 | Sample size above L-05 | 1 M rows (TBC) | `ScanConfig.stats_sample_rows` | | v0.1 |
+| L-07 | Content fingerprint | tables up to 10 k rows (TBC) | | skipped | v0.4 |
+| L-08 | Data preview page | 1,000 rows (TBC) | | paging | v0.2 |
+| L-09 | SQL result in grid / download | 10 k rows shown, 10 M rows download (TBC) | | truncated with a notice | v0.2 |
+| L-10 | Worker crash | n/a | | a crashed pool marks the unfinished files `worker_crashed`; rerun the scan | v0.1 |
+| L-11 | Points per chart | 50 k after bucketing (TBC) | | bucket aggregates (mean, min, max) | v0.3 |
+| L-12 | Databases attached at once | 50 (TBC) | | pick a subset | v0.4 |
+| L-13 | Recent roots remembered | 20 | | oldest dropped | v0.1 |
+
+## Known limitations without a number
+
+1. **Storage format compatibility.** Files written before DuckDB 0.10 and
+   files written by a newer DuckDB than the installed package may not
+   open. Reported per file as `incompatible_version`.
+2. **Writer lock.** A file held open read-write by another process cannot
+   be read. Reported per file as `locked`, not retried.
+3. **Catalog single writer.** While a scan rebuilds the catalog the UI must
+   not hold it open; readers open per request and close.
+4. **Blocking scan.** In v0.1 the UI page waits behind a progress bar until
+   the scan ends. The CLI can run the scan independently.
+5. **No scan cancel** in v0.1; closing the page does not stop the
+   subprocess, which finishes and writes the catalog.
+6. **Heuristics.** Time windows use declared temporal column types only;
+   epoch integers and date strings are not detected. Tags come from path
+   tokens matching the default patterns. See `docs/TUNING.md`.
+7. **Encrypted files** are not readable until F-SCAN-18 is built.
+8. **Network drives** work but scan at network speed; no special handling.
+9. **Views** are listed but not fingerprinted and not row-counted by
+   default; a view that fails to bind is recorded as a table error.
+10. **DuckDB opens SQLite files.** duckfleet rejects them by header check;
+    if a real DuckDB file lacks the magic bytes (it should not), it is
+    rejected too.

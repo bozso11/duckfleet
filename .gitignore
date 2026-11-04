@@ -1,0 +1,27 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+.venv/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+
+# Editors / OS
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# DuckDB files (fixtures and demo fleets are generated at run time)
+*.duckdb
+*.duckdb.wal
+*.ddb
+*.wal
+demo-fleet/
+
+# Local tool state
+.duckfleet/
+.streamlit/secrets.toml
