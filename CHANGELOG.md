@@ -71,3 +71,18 @@ No tool functionality yet.
 4. `CatalogReader.families()` returns each family with its member list, and
    `table_variants()` / `families()` parse their canonical JSON.
 
+### Phase 5: CLI and report (2026-11-04)
+
+1. `cli.py` (`scan`, `report`, `make-demo`, `paths`; exit codes 0, 1 usage,
+   2 fatal; `--progress text|json|none`), `__main__.py` (guarded, so the spawn
+   pool can re-import it), `report.py` (text and Markdown from the catalog).
+   `make_demo_fleet` was already in place since Phase 1.
+2. Checked by hand on Windows with the console script: `duckfleet make-demo`,
+   `scan` (11 candidates, 2 rejected, 10 ok, 1 failed, 22 workers = 24 CPUs
+   minus 2), a second `scan` (10 reused, the corrupt file retried), `report`
+   (strict families 3, 3, 2, 1; loose 6, 2, 1; `events` 3 variants; time
+   windows in order; `wal_present`, `empty_database`, the `corrupt` error and
+   the 2 rejected files).
+3. Scan timestamps in `ScanSummary` now carry milliseconds so the report can
+   show a meaningful duration.
+

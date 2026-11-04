@@ -36,7 +36,7 @@ EventCallback = Callable[[dict], None]
 
 
 def _now() -> str:
-    return datetime.now(UTC).isoformat(timespec="seconds")
+    return datetime.now(UTC).isoformat(timespec="milliseconds")
 
 
 def _can_reuse(existing: DatabaseProfile | None, candidate: Candidate) -> bool:
