@@ -29,3 +29,18 @@ No tool functionality yet.
    further DuckDB file is listed as rejected `over_max_files` and the walk
    stops (LIMITS L-01).
 4. Cache directory uses `appauthor=False` (decision D-015).
+
+### Phase 2: profiler (2026-11-04)
+
+1. `models.py` (profile and summary models, `PROFILE_SCHEMA_VERSION = 1`),
+   `profiler.py` (`profile_database`, `classify_error`, never raises),
+   `fingerprint.py` (canonical tables, strict and loose fingerprints,
+   database fingerprint). Family assignment, variants and diffs follow in
+   Phase 3; the primitives came forward because the profiler needs them.
+2. Timestamps with a time zone are converted to UTC in SQL; the Python client
+   would need `pytz` for them (LIMITS 13).
+3. A file held by a writer: on Windows even the header read fails, so
+   discovery keeps it as a candidate and the profiler classifies it `locked`
+   (LIMITS 11). Lock test (`hold_open` fixture in `conftest.py`) covers both.
+4. A file whose header lacks the DuckDB magic is never opened by the profiler
+   (`not_duckdb`), also when it is called directly.

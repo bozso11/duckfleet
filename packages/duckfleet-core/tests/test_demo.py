@@ -43,7 +43,7 @@ def test_events_tables_and_windows_are_consecutive(demo_fleet: Path) -> None:
     windows = []
     for run in runs:
         path = demo_fleet / run / "metrics.duckdb"
-        (rows, low, high), = query(path, "select count(*), min(ts), max(ts) from events")
+        ((rows, low, high),) = query(path, "select count(*), min(ts), max(ts) from events")
         assert rows == 1000
         assert (high - low).days == 6  # 7-day window
         windows.append((low, high))
@@ -77,8 +77,10 @@ def test_legacy_empty_and_broken_files(demo_fleet: Path) -> None:
     assert query(demo_fleet / "empty" / "empty.duckdb", "select count(*) from duckdb_tables()") == [
         (0,)
     ]
-    assert (demo_fleet / "legacy" / "sqlite_lookalike.db").read_bytes().startswith(
-        b"SQLite format 3\x00"
+    assert (
+        (demo_fleet / "legacy" / "sqlite_lookalike.db")
+        .read_bytes()
+        .startswith(b"SQLite format 3\x00")
     )
     assert (demo_fleet / "broken" / "truncated.duckdb").stat().st_size == 100
     corrupt = (demo_fleet / "broken" / "corrupt.duckdb").read_bytes()

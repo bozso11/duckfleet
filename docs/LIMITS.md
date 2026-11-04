@@ -45,3 +45,21 @@ Last updated: 2026-11-04.
 10. **DuckDB opens SQLite files.** duckfleet rejects them by header check;
     if a real DuckDB file lacks the magic bytes (it should not), it is
     rejected too.
+11. **Windows and writer-held files.** DuckDB opens a file exclusively while a
+    read-write connection exists, and on Windows even reading the header then
+    fails with `PermissionError`. Discovery keeps such a file as a candidate
+    and the profiler reports `locked` (on Windows any `PermissionError` from
+    the header read is read as locked; it can also be an ACL problem, the
+    message carries the OS text). On Linux the lock is advisory, the header
+    read works and DuckDB's own lock error is classified.
+12. **Sampled statistics.** Above L-05 `non_null_count`, `approx_distinct` and
+    numeric min/max describe the sample (`sampled=True`); temporal min/max
+    are always exact. The row count is always exact.
+13. **`timestamptz` in Python.** The Python client needs `pytz` to fetch
+    `TIMESTAMP WITH TIME ZONE` values and it is not a dependency; the
+    profiler converts those columns to UTC inside the SQL instead, so their
+    min/max are UTC.
+14. **Per-table failure is per table.** If the stats query of one table fails
+    (for example a value outside the Python date range), that table keeps its
+    row count and columns but has no column stats and is flagged
+    `table_error:<schema>.<table>`.

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -63,6 +64,17 @@ def read_header(path: Path) -> tuple[bool, int | None]:
     return True, int.from_bytes(head[STORAGE_VERSION_OFFSET:HEADER_BYTES], "little")
 
 
+def looks_locked(exc: BaseException) -> bool:
+    """True when ``exc`` from reading a file most likely means a writer holds it open.
+
+    On Windows DuckDB opens a file exclusively while a read-write connection is
+    open, so even reading its header raises ``PermissionError`` (errno 13, no
+    ``winerror``). On Linux the lock is advisory and reads succeed, so there a
+    ``PermissionError`` is a real permission problem.
+    """
+    return sys.platform == "win32" and isinstance(exc, PermissionError)
+
+
 def has_wal_sibling(path: Path) -> bool:
     """True when ``<path>.wal`` exists next to the file."""
     return (path.parent / (path.name + ".wal")).exists()
@@ -106,12 +118,22 @@ def discover(root: Path, config: ScanConfig) -> DiscoveryResult:
             abs_path = Path(dirpath) / name
             rel_path = abs_path.relative_to(root).as_posix()
             try:
-                is_duckdb, storage_version = read_header(abs_path)
                 stat = abs_path.stat()
             except OSError as exc:
-                logger.warning("cannot read %s: %s", abs_path, exc)
+                logger.warning("cannot stat %s: %s", abs_path, exc)
                 rejected.append(RejectedFile(rel_path, "unreadable"))
                 continue
+            try:
+                is_duckdb, storage_version = read_header(abs_path)
+            except OSError as exc:
+                if looks_locked(exc):
+                    # Held by a writer: the header cannot be verified now. Keep it as a
+                    # candidate so the worker reports it as "locked" instead of hiding it.
+                    is_duckdb, storage_version = True, None
+                else:
+                    logger.warning("cannot read %s: %s", abs_path, exc)
+                    rejected.append(RejectedFile(rel_path, "unreadable"))
+                    continue
             if not is_duckdb:
                 rejected.append(RejectedFile(rel_path, "not_duckdb_header"))
                 continue

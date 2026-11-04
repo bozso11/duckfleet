@@ -175,7 +175,7 @@ def test_unreadable_file_is_rejected(tmp_path: Path, monkeypatch: pytest.MonkeyP
     fake_duckdb(tmp_path / "locked.duckdb")
 
     def boom(path: Path) -> tuple[bool, int | None]:
-        raise PermissionError("denied")
+        raise OSError(5, "Input/output error")
 
     monkeypatch.setattr(discovery, "read_header", boom)
     result = discover(tmp_path, ScanConfig())
@@ -203,3 +203,32 @@ def test_symlinked_directories_not_followed_by_default(tmp_path: Path) -> None:
     followed = discover(tmp_path, ScanConfig(follow_symlinks=True))
     # same target seen through two names: the loop guard keeps each real dir once
     assert len(followed.candidates) == 1
+
+
+@pytest.mark.timeout(60)
+def test_file_held_by_a_writer_stays_a_candidate(tmp_path: Path, hold_open) -> None:
+    """Windows cannot even read a file a writer holds; it must reach the worker as "locked"."""
+    db = tmp_path / "held.duckdb"
+    with hold_open(db):
+        result = discover(tmp_path, ScanConfig())
+    assert rels(result.candidates) == ["held.duckdb"]
+    assert result.rejected == []
+    assert result.candidates[0].size_bytes > 0
+
+
+def test_permission_denied_is_unreadable_off_windows(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fake_duckdb(tmp_path / "denied.duckdb")
+
+    def denied(path: Path) -> tuple[bool, int | None]:
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(discovery, "read_header", denied)
+    monkeypatch.setattr(discovery.sys, "platform", "linux")
+    result = discover(tmp_path, ScanConfig())
+    assert result.candidates == []
+    assert [r.reason for r in result.rejected] == ["unreadable"]
+    monkeypatch.setattr(discovery.sys, "platform", "win32")
+    result = discover(tmp_path, ScanConfig())
+    assert rels(result.candidates) == ["denied.duckdb"]
