@@ -44,3 +44,14 @@ No tool functionality yet.
    (LIMITS 11). Lock test (`hold_open` fixture in `conftest.py`) covers both.
 4. A file whose header lacks the DuckDB magic is never opened by the profiler
    (`not_duckdb`), also when it is called directly.
+
+### Phase 3: fingerprints and families (2026-11-04)
+
+1. `fingerprint.py`: `assign_families` and the richer `family_groups`
+   (members, canonical structure, used by the catalog), `table_variants`,
+   `SchemaMap` helpers and `diff_schemas` (`SchemaDiff`, `TableDiff`,
+   `TypeChange`). Diffs and variants cover tables only; views are not
+   fingerprinted (D-007).
+2. Tests in `test_families.py` (hand-built profiles and the demo fleet:
+   strict families 3, 3, 2, 1; loose 6, 2, 1; `events` has 3 variants).
+   Tests for the fingerprint primitives are in `test_fingerprint.py`.
