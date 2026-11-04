@@ -25,3 +25,4 @@ demo-fleet/
 # Local tool state
 .duckfleet/
 .streamlit/secrets.toml
+/.claude/launch.json

@@ -17,11 +17,15 @@ Last updated: 2026-11-04 (v0.1 implemented).
 | L-06 | Sample size above L-05 | 1 M rows (TBC) | `ScanConfig.stats_sample_rows` | | v0.1 |
 | L-07 | Content fingerprint | tables up to 10 k rows (TBC) | | skipped | v0.4 |
 | L-08 | Data preview page | 1,000 rows (TBC) | | paging | v0.2 |
-| L-09 | SQL result in grid / download | 10 k rows shown, 10 M rows download (TBC) | | truncated with a notice | v0.2 |
+| L-09 | SQL result in grid / download | 10 k rows shown (page option up to 100 k), 1 M rows download (TBC) | `QueryConfig.max_rows`, `max_download_rows` | grid truncated with a notice; download cut at the cap with a warning (D-023) | v0.2 |
 | L-10 | Worker crash | n/a | | a crashed pool marks the unfinished files `worker_crashed`; rerun the scan | v0.1 |
 | L-11 | Points per chart | 50 k after bucketing (TBC) | | bucket aggregates (mean, min, max) | v0.3 |
 | L-12 | Databases attached at once | 50 (TBC) | | pick a subset | v0.4 |
 | L-13 | Recent roots remembered | 20 | | oldest dropped | v0.1 |
+| L-14 | Query timeout (SQL page, preview, summary, CLI) | 60 s (page option 1 to 3,600 s) (TBC) | `QueryConfig.timeout_s` | the query is interrupted and reported as `timeout`; the connection stays usable (D-024) | v0.2 |
+| L-15 | Preview columns shown by default | 50 (TBC) | `QueryConfig.preview_max_columns` | the rest selectable in the multiselect | v0.2 |
+| L-16 | Per-column summary (`SUMMARIZE`) | exact up to L-05 rows, sampled above with L-06 rows | `QueryConfig.stats_row_threshold`, `stats_sample_rows` | `sampled=True` in the summary caption | v0.2 |
+| L-17 | Query connection threads and memory | `min(4, cpu_count)` threads, `min(4 GB, RAM/4)` memory, floor 512 MB (TBC) | `QueryConfig.threads`, `memory_limit_mb`, env `DUCKFLEET_QUERY_THREADS`, `DUCKFLEET_QUERY_MEMORY_MB` | resolved once per process (D-021); DuckDB spills or fails the query at the memory limit | v0.2 |
 
 ## Known limitations without a number
 

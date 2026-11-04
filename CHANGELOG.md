@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-Nothing yet.
+1. `docs/REVIEW_v0.1.md`: review of 0.1.0 against the plan (accepted; 10
+   confirmed defects, none on the demo fleet's main path, to ship as 0.1.1).
+2. `docs/PLAN_v0.2.md`: detailed plan for 0.1.1 (Phase 0) and v0.2
+   (Database page, SQL page, CLI `sql`, `summarize`, `preview`).
+3. Decisions D-019 to D-024; limits L-09 revised, L-14 to L-17 added.
 
 ## 0.1.0 (2026-11-04)
 

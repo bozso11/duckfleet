@@ -14,12 +14,19 @@ time-window timeline, health list, path-token tags, CLI (`scan`, `report`,
 `make-demo`, `paths`), Streamlit Overview page with blocking scan. Plan:
 `docs/PLAN_v0.1.md`; result in `CHANGELOG.md` 0.1.0.
 
-## v0.2 Single-database deep dive
+## v0.1.1 Review fixes (planned, Phase 0 of the v0.2 plan)
+
+The confirmed findings of `docs/REVIEW_v0.1.md`: catalog overflow on a
+high-bit storage version, `infinity` time windows, invalid tag patterns,
+the 64-CPU sidebar crash, and the smaller items.
+
+## v0.2 Single-database deep dive (planned: `docs/PLAN_v0.2.md`)
 
 Database page: table list with row counts, columns and types, per-column
-summary (`SUMMARIZE`, lazy, cached in the catalog), paged preview, read-only
-SQL page with result grid and CSV/Parquet download. F-DB-01..05, F-UI-02,
-F-UI-04.
+summary (`SUMMARIZE`, on demand, cached as JSON sidecars), paged and
+sortable preview, read-only sandboxed SQL page with result grid, timeout,
+CSV/Parquet download and query history; CLI `sql`, `summarize`, `preview`.
+F-DB-01..05, F-UI-02, F-UI-04.
 
 ## v0.3 Visualisation
 

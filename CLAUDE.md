@@ -42,6 +42,7 @@ Python 3.11, uv workspace, core library + Streamlit UI.
 
 ```bash
 uv sync --all-packages          # install everything (Python 3.11 via .python-version)
+uv lock                         # after editing any pyproject dependencies; commit uv.lock
 uv run pytest                   # all tests
 uv run ruff check .             # lint
 uv run duckfleet make-demo ./demo-fleet
