@@ -86,3 +86,22 @@ No tool functionality yet.
 3. Scan timestamps in `ScanSummary` now carry milliseconds so the report can
    show a meaningful duration.
 
+### Phase 6: Streamlit Overview (2026-11-04)
+
+1. `duckfleet_ui`: `launch.py` (`duckfleet-ui`), `app.py` (`st.navigation`
+   with the Overview page), `scan_runner.py` (scan as a subprocess, JSON-lines
+   progress, stderr kept for the error expander), `catalog_access.py`
+   (`st.cache_data` wrappers keyed by catalog path and mtime, a reader per
+   call), `views/overview.py` (sidebar, metrics, fleet table, families and
+   matrix, table variants, diff, timeline, health, rejected files).
+2. Tests: AppTest smoke tests on the wrapper script `_overview_app.py`
+   (every section, session state, load and scan buttons, a complete
+   Scan -> full rescan -> cached rescan flow with a real subprocess) and real
+   subprocess tests of the scan runner. `st.navigation` itself is not
+   exercised by AppTest; the page function is (plan Section 10 item 3).
+3. Manual run on Windows (built-in browser, `duckfleet-ui`): scan of the demo
+   fleet from the sidebar with live progress, full rescan (11 profiled),
+   cached load in a fresh session, scan of a folder with a space and
+   non-ASCII characters; all sections rendered, no exceptions.
+4. `streamlit>=1.50` (the page uses `width="stretch"`); lock file refreshed.
+

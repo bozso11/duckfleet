@@ -5,7 +5,7 @@ description = "Streamlit UI for duckfleet (fleet overview, database deep dive, p
 requires-python = ">=3.11,<3.14"
 dependencies = [
     "duckfleet-core",
-    "streamlit>=1.40,<2",
+    "streamlit>=1.50,<2",
     "plotly>=5.24",
     "pandas>=2.2,<4",
     "pyarrow>=17",
