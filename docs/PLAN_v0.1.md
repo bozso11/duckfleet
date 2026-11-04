@@ -1,6 +1,7 @@
 # Implementation plan v0.1: scan + fleet overview
 
-Status: ready for implementation, 2026-11-04. Written for Sonnet 5.5 or any
+Status: implemented as 0.1.0 on 2026-11-04 (deviations and results: `CHANGELOG.md`
+0.1.0, `docs/DECISIONS.md` D-015 to D-018). Written for Sonnet 5.5 or any
 Claude Code session. Read `CLAUDE.md` first, then this file top to bottom.
 Everything here is decided unless marked (TBC) or listed in Section 10.
 Facts marked (verified) were checked on 2026-11-04 against duckdb 1.5.6,

@@ -1,7 +1,7 @@
 # Architecture
 
-Last updated: 2026-11-04 (Phase 0). After v0.1 ships, copy the final
-catalog schema from `docs/PLAN_v0.1.md` Section 3.4 into Section 5 here.
+Last updated: 2026-11-04 (v0.1 implemented). Section 5 holds the final
+catalog schema, copied from `duckfleet_core/catalog.py` (`SCHEMA_SQL`).
 
 ## 1. Two packages, one boundary
 
@@ -19,7 +19,9 @@ the CLI, notebooks and tests.
 ## 2. Components (core)
 
 1. **discovery**: walks the root, filters by extension, checks the DuckDB
-   header magic, records size, mtime, WAL sibling, storage version.
+   header magic, records size, mtime, WAL sibling, storage version. A file a
+   writer holds open (unreadable on Windows) stays a candidate and is
+   reported `locked` by the profiler.
 2. **profiler**: worker entry point; opens one file read-only with capped
    threads and memory, lists schemas, tables, views, columns, counts rows,
    computes cheap column stats and time windows, classifies errors. Never
@@ -39,6 +41,10 @@ the CLI, notebooks and tests.
 9. **cli**: `scan`, `report`, `make-demo`, `paths`.
 10. **demo**: generator of a small fleet with known properties, used by
     tests and the acceptance checklist.
+11. **config / models**: `ScanConfig` (every option and its resolved
+    default) and the pydantic models of a profile (`DatabaseProfile`,
+    `TableProfile`, `ColumnInfo`, `ProfileError`) and of a scan
+    (`ScanSummary`).
 
 ## 3. Data flow
 
@@ -75,8 +81,68 @@ Nothing is written inside the scanned folder.
 
 ## 5. Catalog schema
 
-See `docs/PLAN_v0.1.md` Section 3.4 until v0.1 ships; then the final schema
-lives here.
+`<cache>/roots/<root_key>/catalog.duckdb`, rebuilt from all profiles at the
+end of every scan (build into `catalog.duckdb.tmp`, then `os.replace`).
+
+```sql
+CREATE TABLE scan_runs (
+    run_id VARCHAR, root VARCHAR, started_at TIMESTAMP, finished_at TIMESTAMP,
+    duckfleet_version VARCHAR, duckdb_version VARCHAR, workers INTEGER,
+    files_walked INTEGER, files_candidates INTEGER, files_rejected INTEGER,
+    files_profiled INTEGER, files_reused INTEGER, files_failed INTEGER,
+    truncated BOOLEAN, config_json VARCHAR
+);
+CREATE TABLE databases (
+    rel_path VARCHAR PRIMARY KEY, file_name VARCHAR, abs_path VARCHAR,
+    size_bytes BIGINT, mtime_ns BIGINT, has_wal BOOLEAN, storage_version BIGINT,
+    status VARCHAR, error_type VARCHAR, error_message VARCHAR,
+    profiled_at TIMESTAMP, profile_seconds DOUBLE,
+    n_schemas INTEGER, n_tables INTEGER, n_views INTEGER, total_rows BIGINT,
+    fp_strict VARCHAR, fp_loose VARCHAR, family_strict VARCHAR, family_loose VARCHAR,
+    time_min TIMESTAMP, time_max TIMESTAMP, tags_json VARCHAR, health_json VARCHAR
+);
+CREATE TABLE tables (
+    rel_path VARCHAR, schema_name VARCHAR, table_name VARCHAR, kind VARCHAR,
+    n_columns INTEGER, row_count BIGINT, estimated_size BIGINT,
+    fp_strict VARCHAR, fp_loose VARCHAR, time_min TIMESTAMP, time_max TIMESTAMP,
+    error VARCHAR
+);
+CREATE TABLE columns (
+    rel_path VARCHAR, schema_name VARCHAR, table_name VARCHAR, ordinal INTEGER,
+    column_name VARCHAR, data_type VARCHAR, nullable BOOLEAN,
+    is_temporal BOOLEAN, is_numeric BOOLEAN, non_null_count BIGINT,
+    min_value VARCHAR, max_value VARCHAR, approx_distinct BIGINT, sampled BOOLEAN
+);
+CREATE TABLE families (
+    level VARCHAR, family_id VARCHAR, fingerprint VARCHAR, n_members INTEGER,
+    n_tables INTEGER, canonical_json VARCHAR
+);
+CREATE TABLE table_variants (
+    schema_name VARCHAR, table_name VARCHAR, fp_strict VARCHAR,
+    n_members INTEGER, n_columns INTEGER, canonical_json VARCHAR
+);
+CREATE TABLE rejected (rel_path VARCHAR, reason VARCHAR);
+```
+
+Rules:
+
+1. `families.level` is `strict` or `loose`. `family_id` is `F1, F2, ...` for
+   strict and `L1, L2, ...` for loose, numbered by `n_members` descending,
+   then fingerprint ascending (deterministic).
+2. Databases with `status = 'error'` or without tables have NULL
+   fingerprints and family ids; they appear in `databases` and in the health
+   list, not in `families`.
+3. `tags_json` and `health_json` are JSON text; `CatalogReader` parses them.
+   `families.canonical_json` is `[[schema, table, canonical columns], ...]`
+   of the first member, `table_variants.canonical_json` the strict
+   `[[name, type], ...]` of that variant.
+4. Timestamps are naive UTC; `time_min` and `time_max` are the minimum and
+   maximum over all temporal columns of all tables (TUNING time-window-scope).
+5. `CatalogReader` opens a read-only connection inside each method and closes
+   it in `finally`; an open handle would block the next scan's `os.replace`
+   on Windows. Methods: `scan_run`, `databases`, `tables`, `columns`,
+   `families`, `family_members`, `family_table_matrix`, `table_variants`,
+   `timeline`, `health`, `rejected`, `diff`, `df` (pandas, UI only).
 
 ## 6. Concurrency and locking rules
 
@@ -92,11 +158,14 @@ lives here.
 ## 7. UI structure (v0.1)
 
 ```
+launch.py         console script duckfleet-ui -> streamlit run app.py
 app.py            st.set_page_config, st.navigation([Overview])
 views/overview.py render(): sidebar (root, options, Scan), metrics, fleet table,
                   families + matrix, table variants, diff, timeline, health, rejected
-scan_runner.py    subprocess + JSON-lines progress
-catalog_access.py st.cache_data wrappers keyed by catalog path + mtime
+scan_runner.py    subprocess (python -m duckfleet_core scan --progress json) + JSON-lines
+catalog_access.py st.cache_data wrappers keyed by catalog path + mtime, DataFrames
 ```
 
-Later versions add `views/database.py`, `views/sql.py`, `views/plot.py`.
+The page reads `DUCKFLEET_ROOT` and `DUCKFLEET_CACHE_DIR` for its defaults
+(the smoke test relies on them). Later versions add `views/database.py`,
+`views/sql.py`, `views/plot.py`.

@@ -5,9 +5,9 @@ are, which table structures exist and how many of each, which time windows
 and runs they hold, then deep dive into one file, query it and plot its
 columns.
 
-Status: v0.1 (scan + fleet overview) is specified in `docs/PLAN_v0.1.md`
-and in implementation. `docs/FEATURES.md` says what works today;
-`docs/ROADMAP.md` says what comes next.
+Status: v0.1 (scan + fleet overview) is implemented; what it does is in
+`CHANGELOG.md` (0.1.0) and `docs/FEATURES.md`, what comes next in
+`docs/ROADMAP.md`. The plan it was built from is `docs/PLAN_v0.1.md`.
 
 ## Quick start
 
@@ -22,14 +22,24 @@ uv run duckfleet report ./demo-fleet       # text summary of the fleet
 uv run duckfleet-ui                        # Streamlit app
 ```
 
-The commands exist once v0.1 is implemented; the current tree has the
-workspace skeleton, the docs and the plan.
+1. `scan` writes one JSON profile per database and a catalog into the user
+   cache (never into the scanned folder); `duckfleet paths ./demo-fleet`
+   prints the location. A second scan reuses the profiles of unchanged files.
+2. `duckfleet-ui` opens the Overview page: enter a root folder in the
+   sidebar, press **Scan** (the page waits behind a progress bar) or **Load
+   existing catalog**. Extra arguments go to Streamlit, for example
+   `uv run duckfleet-ui --server.port 8600`. The environment variables
+   `DUCKFLEET_ROOT` and `DUCKFLEET_CACHE_DIR` set the initial root and the
+   cache directory.
+3. `uv run pytest` and `uv run ruff check .` run the checks CI runs on
+   Windows and Linux.
 
 ## Packages
 
 1. `packages/duckfleet-core`: discovery, read-only profiling in a parallel
    worker pool, schema fingerprints and families, profile cache, catalog
-   (a DuckDB file), CLI. No UI dependency.
+   (a DuckDB file), CLI (`scan`, `report`, `make-demo`, `paths`). No UI
+   dependency.
 2. `packages/duckfleet-ui`: Streamlit app over the core: fleet overview
    (v0.1), database deep dive and SQL (v0.2), plots (v0.3), cross-database
    views (v0.4).

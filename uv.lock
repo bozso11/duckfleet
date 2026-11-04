@@ -200,7 +200,7 @@ wheels = [
 
 [[package]]
 name = "duckfleet-core"
-version = "0.1.0.dev0"
+version = "0.1.0"
 source = { editable = "packages/duckfleet-core" }
 dependencies = [
     { name = "duckdb" },
@@ -219,7 +219,7 @@ requires-dist = [
 
 [[package]]
 name = "duckfleet-ui"
-version = "0.1.0.dev0"
+version = "0.1.0"
 source = { editable = "packages/duckfleet-ui" }
 dependencies = [
     { name = "duckfleet-core" },
@@ -240,7 +240,7 @@ requires-dist = [
 
 [[package]]
 name = "duckfleet-workspace"
-version = "0.1.0.dev0"
+version = "0.1.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]

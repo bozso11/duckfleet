@@ -2,6 +2,96 @@
 
 ## Unreleased
 
+Nothing yet.
+
+## 0.1.0 (2026-11-04)
+
+First usable version: scan a folder tree of DuckDB files and explore it as
+one fleet (plan: `docs/PLAN_v0.1.md`).
+
+### What it does
+
+1. `duckfleet scan ROOT`: finds every DuckDB file (extension plus header
+   magic, so SQLite files are rejected), profiles each one read-only in a
+   spawn process pool (`max(1, cpu_count - 2)` workers, one DuckDB thread and
+   a memory cap each), writes one JSON profile per file into the user cache
+   and builds a DuckDB catalog from the profiles. Rescans reuse the profiles
+   of unchanged files and retry failed ones.
+2. `duckfleet report ROOT` (text or Markdown), `duckfleet make-demo DIR`,
+   `duckfleet paths ROOT`.
+3. Schema fingerprints (strict: names and types, loose: names only, column
+   order ignored), families, per-table variants, a diff of two databases or
+   families, time windows, health flags, classified errors, path-token tags.
+4. `duckfleet-ui`: Streamlit Overview page (sidebar scan, metrics, fleet
+   table, families and matrix, table variants, diff, timeline, health,
+   rejected files).
+
+### Acceptance checklist (plan Section 8)
+
+1. [x] CI green on Windows and Linux for every phase commit (1 to 6); the
+   result for the 0.1.0 commit is in the GitHub Actions run of that commit.
+2. [x] `make-demo` + `scan` of the demo fleet: 14 files walked, 11
+   candidates, 2 rejected, 10 ok, 1 failed (`corrupt`); a second scan reuses
+   10 profiles and retries the failed one (checked with a fresh cache
+   directory on Windows, also asserted by `test_cli.py` and
+   `test_coordinator.py` on both OSes).
+3. [x] `report`: four strict families (3, 3, 2, 1 members), three loose
+   families (6, 2, 1), `events` with 3 variants, time windows in order,
+   `wal_present` and `empty_database`, the `corrupt` error, the 2 rejected
+   files.
+4. [x] Lock test (`test_profiler.py`, also end to end in
+   `test_coordinator.py`): a file held by a writer process is `locked`, green
+   on Windows and Linux CI.
+5. [x] Windows: `duckfleet-ui`, demo fleet scanned from the sidebar in the
+   built-in browser: progress visible, all sections rendered without an
+   exception (8 metrics, 10 tables, the timeline with 4 family traces), a
+   full rescan (11 profiled) and a cached load in a fresh session worked.
+   Linux: no manual browser session was possible; the same flow (Scan, full
+   rescan, cached rescan, every section) runs as an AppTest with a real scan
+   subprocess in CI on Ubuntu.
+6. [x] Scan of a folder with a space and non-ASCII characters
+   (`données été/flotte démo 1`) from the UI on Windows; also tested in the
+   CLI, coordinator and scan-runner tests on both OSes.
+7. [x] The default `workers` is `max(1, cpu_count - 2)` (22 on the 24-CPU
+   development machine) and shows in the `finished` summary and the UI notice.
+8. [x] `FEATURES.md`, `LIMITS.md`, `TUNING.md`, `ARCHITECTURE.md` (final
+   catalog schema), `CHANGELOG.md`, `README.md` updated; versions 0.1.0.
+
+Also checked: the UI tests pass with pandas 2.2.3 as well as 3.1.1.
+
+### Deviations from the plan
+
+1. `demo.py` and `tags.py` were built in Phase 1 and the fingerprint
+   primitives in Phase 2, because tests and `ScanConfig` needed them earlier
+   than the plan's phase order.
+2. Discovery: when the limit is hit, the first further DuckDB file is listed
+   as rejected `over_max_files` and the walk stops (LIMITS L-01).
+3. A file held by a writer is unreadable on Windows even for its header;
+   discovery keeps it as a candidate and the profiler reports `locked`
+   (LIMITS 11).
+4. The catalog is filled by unnesting one list per column instead of
+   `executemany` (D-016).
+5. The reuse check also compares the `.wal` presence flag; `ScanSummary.workers`
+   is the configured count while the pool is capped at the number of files
+   (LIMITS 15, 16).
+6. Timestamps with a time zone are converted to UTC in SQL (no `pytz`
+   dependency, LIMITS 13).
+7. The default cache directory is `user_cache_dir("duckfleet", appauthor=False)`
+   (D-015); `streamlit>=1.50` (the page uses `width="stretch"`).
+8. The profiler never opens a file whose header lacks the DuckDB magic, also
+   when called directly.
+
+### Open after 0.1.0
+
+1. `incompatible_version` and `encrypted` are classified by message only; no
+   fixture exists (plan Section 10 item 2).
+2. `st.navigation` is not exercised by AppTest; the page function is.
+3. Numbers marked (TBC) in `docs/LIMITS.md` and the tuning points in
+   `docs/TUNING.md` are untested on a real fleet.
+4. Open options discovered while building: `docs/ROADMAP.md` items 13 and 14.
+
+### Build log by phase
+
 ### Phase 0 (2026-11-04)
 
 1. uv workspace with two packages: `duckfleet-core` (duckdb, pydantic,

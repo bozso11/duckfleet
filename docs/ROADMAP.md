@@ -6,13 +6,13 @@ implementation and a `CHANGELOG.md` entry after. Feature IDs refer to
 
 Last updated: 2026-11-04.
 
-## v0.1 Scan + fleet overview (in implementation)
+## v0.1 Scan + fleet overview (done, 2026-11-04)
 
 Discovery with header check, parallel read-only profiling, profile cache,
 catalog, strict/loose/per-table fingerprints, families, family diff,
 time-window timeline, health list, path-token tags, CLI (`scan`, `report`,
 `make-demo`, `paths`), Streamlit Overview page with blocking scan. Plan:
-`docs/PLAN_v0.1.md`.
+`docs/PLAN_v0.1.md`; result in `CHANGELOG.md` 0.1.0.
 
 ## v0.2 Single-database deep dive
 
@@ -50,6 +50,10 @@ of small tables. F-X-01..02, F-PLOT-04, F-FLEET-08.
     (F-PLOT-05).
 11. Per-file time budget in the scan (F-SCAN-16).
 12. Stable family labels across scans (TUNING family-labels).
+13. Re-profile when the content of a `.wal` sibling changes, not only when it
+    appears or disappears (LIMITS 15).
+14. Option to keep the scan options (tag patterns, stats thresholds) in a
+    config file and invalidate cached profiles when they change.
 
 ## Out of scope
 

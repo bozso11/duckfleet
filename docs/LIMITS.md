@@ -1,10 +1,11 @@
 # Limits
 
 Every hard and soft limit, its default, where it is configured, and what
-happens beyond it. Numbers marked (TBC) are proposals until v0.1
-acceptance confirms them on real data.
+happens beyond it. Numbers marked (TBC) are proposals. The v0.1 acceptance
+run used the demo fleet only, so they stay (TBC) until a real fleet has been
+scanned.
 
-Last updated: 2026-11-04.
+Last updated: 2026-11-04 (v0.1 implemented).
 
 | ID | Limit | Default | Config | Beyond the limit | Since |
 |---|---|---|---|---|---|
@@ -73,4 +74,11 @@ Last updated: 2026-11-04.
     (`max(1, cpu_count - 2)` by default); the pool never starts more
     processes than there are files to profile, and one file or one worker
     runs in the scan process itself.
+17. **Timing on the demo fleet (Windows, 24 CPUs).** A scan with a process
+    pool has a start-up cost of about 1.3 s per worker process (spawn, import
+    of duckdb and pydantic), which dominates tiny fleets; a rescan that reuses
+    all profiles runs in about 0.1 s. The catalog build takes about 1.4 s per
+    120,000 column rows (400 files with 10 tables of 30 columns).
+18. **Catalog rebuilt on every scan.** The cost grows with the total number of
+    columns in the fleet, not with the data volume (D-003, D-016).
 

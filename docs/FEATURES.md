@@ -5,25 +5,25 @@ Status values: `done vX` (shipped in version X), `planned vX` (in the
 version ladder), `open option` (not scheduled), `out of scope`. Update the
 row in the same commit that changes the behaviour.
 
-Last updated: 2026-11-04 (Phase 0: nothing implemented yet).
+Last updated: 2026-11-04 (v0.1 implemented; later versions not started).
 
 ## Discovery and scanning
 
 | ID | Feature | Status | Limits | Notes |
 |---|---|---|---|---|
-| F-SCAN-01 | Recursive discovery of DuckDB files by extension list | planned v0.1 | L-01 max files | default `.duckdb`, `.db`, `.ddb` |
-| F-SCAN-02 | Header check (magic bytes) on every candidate; non-DuckDB files rejected with reason | planned v0.1 | | mandatory, DuckDB itself opens SQLite files |
-| F-SCAN-03 | Optional header sniff of files with any extension | planned v0.1 | | `--sniff-all` |
-| F-SCAN-04 | Parallel read-only profiling in worker processes, all but two cores | planned v0.1 | L-02, L-03, L-04 | spawn context on both OSes |
-| F-SCAN-05 | Per-file profile: schemas, tables, views, columns, types, exact row counts | planned v0.1 | | |
-| F-SCAN-06 | Cheap column stats: non-null count, min/max for numeric and temporal, approx distinct | planned v0.1 | L-05, L-06 | sampled above threshold |
-| F-SCAN-07 | Time window per table and per file from temporal columns | planned v0.1 | | TUNING temporal-types, timezones |
-| F-SCAN-08 | Health flags: WAL sibling, empty database, no temporal columns, per-table errors | planned v0.1 | | |
-| F-SCAN-09 | Error classification: locked, not_duckdb, corrupt, incompatible_version, encrypted, missing | planned v0.1 | | substrings per installed duckdb |
-| F-SCAN-10 | Profile cache; rescan reuses unchanged files (size + mtime) | planned v0.1 | | `--full` to force |
-| F-SCAN-11 | Catalog as a DuckDB file rebuilt from cached profiles | planned v0.1 | | user cache dir |
-| F-SCAN-12 | Tags from path tokens (exp_12, run-03, key=value) | planned v0.1 | | TUNING tag-patterns |
-| F-SCAN-13 | Scan progress as JSON lines for the UI | planned v0.1 | | |
+| F-SCAN-01 | Recursive discovery of DuckDB files by extension list | done v0.1 | L-01 max files | default `.duckdb`, `.db`, `.ddb` |
+| F-SCAN-02 | Header check (magic bytes) on every candidate; non-DuckDB files rejected with reason | done v0.1 | | mandatory, DuckDB itself opens SQLite files |
+| F-SCAN-03 | Optional header sniff of files with any extension | done v0.1 | | `--sniff-all` |
+| F-SCAN-04 | Parallel read-only profiling in worker processes, all but two cores | done v0.1 | L-02, L-03, L-04 | spawn context on both OSes |
+| F-SCAN-05 | Per-file profile: schemas, tables, views, columns, types, exact row counts | done v0.1 | | |
+| F-SCAN-06 | Cheap column stats: non-null count, min/max for numeric and temporal, approx distinct | done v0.1 | L-05, L-06 | sampled above threshold |
+| F-SCAN-07 | Time window per table and per file from temporal columns | done v0.1 | | TUNING temporal-types, timezones |
+| F-SCAN-08 | Health flags: WAL sibling, empty database, no temporal columns, per-table errors | done v0.1 | | |
+| F-SCAN-09 | Error classification: locked, not_duckdb, corrupt, incompatible_version, encrypted, missing, worker_crashed | done v0.1 | L-10 | substrings per installed duckdb; locked, not_duckdb, corrupt and missing are covered by tests on both OSes; incompatible_version and encrypted match the message only (no fixture); a writer-held file is `locked` on both OSes |
+| F-SCAN-10 | Profile cache; rescan reuses unchanged files (size + mtime + WAL presence) | done v0.1 | | `--full` to force; failed files are always retried |
+| F-SCAN-11 | Catalog as a DuckDB file rebuilt from cached profiles | done v0.1 | | user cache dir |
+| F-SCAN-12 | Tags from path tokens (exp_12, run-03, key=value) | done v0.1 | | TUNING tag-patterns |
+| F-SCAN-13 | Scan progress as JSON lines for the UI | done v0.1 | | |
 | F-SCAN-14 | Non-blocking scan (UI usable while scanning) | open option | | v0.1 blocks behind a progress bar |
 | F-SCAN-15 | Cancel a running scan | open option | | |
 | F-SCAN-16 | Per-file time budget | open option | | |
@@ -35,13 +35,13 @@ Last updated: 2026-11-04 (Phase 0: nothing implemented yet).
 
 | ID | Feature | Status | Limits | Notes |
 |---|---|---|---|---|
-| F-FLEET-01 | Strict schema fingerprint (table + column names + types, order ignored) | planned v0.1 | | |
-| F-FLEET-02 | Loose schema fingerprint (names only) | planned v0.1 | | |
-| F-FLEET-03 | Schema families with member counts, both levels | planned v0.1 | | |
-| F-FLEET-04 | Per-table variants across the fleet | planned v0.1 | | |
-| F-FLEET-05 | Diff between two files or families (tables, columns, types) | planned v0.1 | | |
-| F-FLEET-06 | Family-by-table matrix | planned v0.1 | | |
-| F-FLEET-07 | Time-window timeline, one bar per file | planned v0.1 | | files without temporal columns listed separately |
+| F-FLEET-01 | Strict schema fingerprint (table + column names + types, order ignored) | done v0.1 | | |
+| F-FLEET-02 | Loose schema fingerprint (names only) | done v0.1 | | |
+| F-FLEET-03 | Schema families with member counts, both levels | done v0.1 | | |
+| F-FLEET-04 | Per-table variants across the fleet | done v0.1 | | |
+| F-FLEET-05 | Diff between two files or families (tables, columns, types) | done v0.1 | | |
+| F-FLEET-06 | Family-by-table matrix | done v0.1 | | |
+| F-FLEET-07 | Time-window timeline, one bar per file | done v0.1 | | files without temporal columns listed separately |
 | F-FLEET-08 | Content fingerprint of small tables (identical config detection) | planned v0.4 | L-07 | |
 | F-FLEET-09 | Identity query run against every file (user-supplied SQL) | open option | | depends on real metadata layout |
 | F-FLEET-10 | Type normalisation for fingerprints (INT vs INTEGER aliases) | open option | | TUNING type-normalization |
@@ -81,13 +81,13 @@ Last updated: 2026-11-04 (Phase 0: nothing implemented yet).
 
 | ID | Feature | Status | Limits | Notes |
 |---|---|---|---|---|
-| F-CLI-01 | `duckfleet scan`, `report`, `make-demo`, `paths` | planned v0.1 | | |
+| F-CLI-01 | `duckfleet scan`, `report`, `make-demo`, `paths` | done v0.1 | | |
 | F-CLI-02 | Report export to Markdown or HTML file | open option | | |
-| F-UI-01 | Streamlit Overview page | planned v0.1 | | blocking scan |
+| F-UI-01 | Streamlit Overview page | done v0.1 | | blocking scan behind a progress bar; metrics, fleet table, families + matrix, table variants, diff, timeline, health, rejected |
 | F-UI-02 | Database page | planned v0.2 | | |
 | F-UI-03 | Plot page | planned v0.3 | | |
 | F-UI-04 | SQL page | planned v0.2 | | |
-| F-DOC-01 | Feature matrix, limits, tuning, decisions, roadmap kept current | planned v0.1 | | this file |
+| F-DOC-01 | Feature matrix, limits, tuning, decisions, roadmap kept current | done v0.1 | | this file |
 | F-OPS-01 | Windows and Linux CI | done v0.0 | | Phase 0 |
 | F-OPS-02 | Multi-user, auth, hosting | out of scope | | |
 | F-OPS-03 | Writes to scanned data | out of scope | | |
