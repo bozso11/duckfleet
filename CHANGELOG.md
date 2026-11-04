@@ -55,3 +55,19 @@ No tool functionality yet.
 2. Tests in `test_families.py` (hand-built profiles and the demo fleet:
    strict families 3, 3, 2, 1; loose 6, 2, 1; `events` has 3 variants).
    Tests for the fingerprint primitives are in `test_fingerprint.py`.
+
+### Phase 4: store, coordinator, catalog (2026-11-04)
+
+1. `store.py` (`ProfileStore`, recent roots), `coordinator.py` (`run_scan`
+   with the progress events of plan Section 3.5, spawn process pool, in-process
+   run for one worker or one file, `worker_crashed` handling), `catalog.py`
+   (`build_catalog`, `CatalogReader`, atomic swap with 5 retries).
+2. Deviation from plan 3.4 rule 4: the catalog is filled by unnesting one
+   Python list per column instead of `executemany` (decision D-016, 1.1 s
+   against 56 s for 120k column rows).
+3. The reuse check also compares the `.wal` presence flag (LIMITS 15), and
+   `ScanSummary.workers` is the configured count while the pool is capped at
+   the number of files to profile (LIMITS 16).
+4. `CatalogReader.families()` returns each family with its member list, and
+   `table_variants()` / `families()` parse their canonical JSON.
+

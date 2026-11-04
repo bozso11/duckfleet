@@ -63,3 +63,14 @@ Last updated: 2026-11-04.
     (for example a value outside the Python date range), that table keeps its
     row count and columns but has no column stats and is flagged
     `table_error:<schema>.<table>`.
+15. **Reuse of cached profiles** compares size, mtime, profile schema version
+    and the presence of the `.wal` sibling. A file that changes without a
+    different size or mtime, or a WAL whose content changes while it stays
+    present, is not noticed; `--full` re-profiles everything. Changed scan
+    options (tag patterns, stats thresholds, views in fingerprints) also need
+    `--full`.
+16. **Pool size.** `ScanSummary.workers` is the configured count
+    (`max(1, cpu_count - 2)` by default); the pool never starts more
+    processes than there are files to profile, and one file or one worker
+    runs in the scan process itself.
+

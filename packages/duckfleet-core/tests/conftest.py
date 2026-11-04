@@ -50,6 +50,7 @@ time.sleep(120)
 @contextlib.contextmanager
 def _hold_open(db: Path) -> Iterator[None]:
     """Keep ``db`` open read-write in a second process (a writer that excludes everyone)."""
+    db.parent.mkdir(parents=True, exist_ok=True)
     marker = db.with_name(db.name + ".ready")
     child = subprocess.Popen(
         [sys.executable, "-c", _HOLDER, str(db), str(marker)],
