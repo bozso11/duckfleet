@@ -8,7 +8,7 @@ Last updated: 2026-11-04.
 
 | ID | Limit | Default | Config | Beyond the limit | Since |
 |---|---|---|---|---|---|
-| L-01 | Files discovered per root | 1,000 (TBC) | `ScanConfig.max_files`, `--max-files` | walk stops, `truncated=True`, warning in UI and report | v0.1 |
+| L-01 | Files discovered per root | 1,000 (TBC) | `ScanConfig.max_files`, `--max-files` | walk stops at the first further DuckDB file, which is listed as rejected `over_max_files`; `truncated=True`, warning in UI and report. A root with exactly `max_files` files is not truncated | v0.1 |
 | L-02 | Worker processes | `max(1, cpu_count - 2)` | `ScanConfig.workers`, `--workers` | user choice; more workers than cores oversubscribes | v0.1 |
 | L-03 | DuckDB threads per worker | 1 | `ScanConfig.worker_threads` | parallelism comes from the process count | v0.1 |
 | L-04 | Memory limit per worker | `min(2048 MB, total_ram / 2 / workers)`, floor 256 MB (TBC) | `ScanConfig.worker_memory_limit_mb` | DuckDB spills or fails the query; the file is recorded as error | v0.1 |
