@@ -4,6 +4,21 @@
 
 v0.2 in progress (plan: `docs/PLAN_v0.2.md`).
 
+### Phase 2: summaries
+
+1. `duckfleet_core.summary`: `ColumnSummary`, `TableSummary` (schema version
+   1) and `summarize_table` (DuckDB `SUMMARIZE`, on a sample above
+   `stats_row_threshold` rows, under the query timeout). A failure becomes a
+   summary with `error` set instead of an exception.
+2. `store.SummaryStore`: JSON sidecars
+   `roots/<root_key>/summaries/<file_key>/<table_key>.json`, valid while the
+   database file's size and mtime, the summary schema version and the DuckDB
+   version match (D-020); `get_or_compute(..., refresh=False)`. Error
+   summaries are saved but never reused. `ProfileStore.prune` removes the
+   summaries folder of every pruned profile.
+3. The helpers `as_query_errors`, `database_name` and `execute_limited` of
+   `query.py` lost their underscore (shared with `summary.py`).
+
 ### Phase 1: query layer
 
 1. `duckfleet_core.query`: `QueryConfig`, `connection_config`, `open_readonly`

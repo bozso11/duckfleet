@@ -163,7 +163,7 @@ def classify_error(exc: BaseException) -> QueryError:
 
 
 @contextlib.contextmanager
-def _as_query_errors() -> Iterator[None]:
+def as_query_errors() -> Iterator[None]:
     """Turn every DuckDB failure in the block into a ``QueryError``."""
     try:
         yield
@@ -200,7 +200,7 @@ def _with_timeout(con: duckdb.DuckDBPyConnection, fn: Callable[[], T], timeout_s
 # ---------------------------------------------------------------- run_query
 
 
-def _execute_limited(
+def execute_limited(
     con: duckdb.DuckDBPyConnection, sql: str, max_rows: int, timeout_s: float
 ) -> QueryResult:
     started = time.perf_counter()
@@ -238,8 +238,8 @@ def run_query(
     ``QueryError``.
     """
     limit = config.max_rows if max_rows is None else max_rows
-    with _as_query_errors(), open_readonly(db_path, config) as con:
-        return _execute_limited(con, sql, limit, config.timeout_s)
+    with as_query_errors(), open_readonly(db_path, config) as con:
+        return execute_limited(con, sql, limit, config.timeout_s)
 
 
 # ---------------------------------------------------------------- export_query
@@ -270,7 +270,7 @@ def export_query(
         ) from exc
 
     cap = config.max_download_rows if max_rows is None else max_rows
-    with _as_query_errors(), open_readonly(db_path, config) as con:
+    with as_query_errors(), open_readonly(db_path, config) as con:
 
         def work() -> Any:
             relation = con.sql(sql)
@@ -300,7 +300,7 @@ def export_query(
 # ---------------------------------------------------------------- tables and previews
 
 
-def _database_name(con: duckdb.DuckDBPyConnection) -> str:
+def database_name(con: duckdb.DuckDBPyConnection) -> str:
     row = con.execute("select database_name from duckdb_databases() where not internal").fetchone()
     if row is None:
         raise QueryError("other", "the file holds no database")
@@ -323,8 +323,8 @@ def table_columns(
     db_path: str | Path, schema_name: str, table_name: str, config: QueryConfig
 ) -> list[tuple[str, str]]:
     """``(column name, type)`` of a table or view, in table order; empty when it does not exist."""
-    with _as_query_errors(), open_readonly(db_path, config) as con:
-        return _table_columns(con, _database_name(con), schema_name, table_name)
+    with as_query_errors(), open_readonly(db_path, config) as con:
+        return _table_columns(con, database_name(con), schema_name, table_name)
 
 
 def preview_table(
@@ -348,8 +348,8 @@ def preview_table(
     if offset < 0:
         raise ValueError("offset must not be negative")
     page = config.preview_rows if limit is None else limit
-    with _as_query_errors(), open_readonly(db_path, config) as con:
-        db_name = _database_name(con)
+    with as_query_errors(), open_readonly(db_path, config) as con:
+        db_name = database_name(con)
         known = _table_columns(con, db_name, schema_name, table_name)
         if not known:
             raise QueryError("sql", f"unknown table or view {schema_name}.{table_name}")
@@ -368,4 +368,4 @@ def preview_table(
         if order_by:
             sql += f" ORDER BY {quote_ident(order_by)} {'DESC' if descending else 'ASC'}"
         sql += f" LIMIT {page + 1} OFFSET {offset}"
-        return _execute_limited(con, sql, page, config.timeout_s)
+        return execute_limited(con, sql, page, config.timeout_s)

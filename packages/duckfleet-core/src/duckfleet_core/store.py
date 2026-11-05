@@ -8,6 +8,7 @@ Layout (decision D-003, D-009)::
         catalog.duckdb        derived index, rebuilt at the end of every scan
         catalog.duckdb.tmp    build target, replaced atomically
         last_scan.json        ScanSummary of the latest run
+        summaries/<file_key>/<table_key>.json    per-table SUMMARIZE results (SummaryStore)
     <cache_dir>/recent_roots.json
 
 The JSON profiles are the source of truth; the catalog is derived from them.
@@ -20,13 +21,17 @@ import hashlib
 import json
 import logging
 import os
+import shutil
 import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+import duckdb
 from pydantic import ValidationError
 
 from duckfleet_core.models import PROFILE_SCHEMA_VERSION, DatabaseProfile, ScanSummary
+from duckfleet_core.query import QueryConfig
+from duckfleet_core.summary import SUMMARY_SCHEMA_VERSION, TableSummary, summarize_table
 
 logger = logging.getLogger("duckfleet")
 
@@ -42,6 +47,11 @@ def root_key(root: Path) -> str:
 def file_key(rel_path: str) -> str:
     """Stable key of a database file inside a root: sha1 of its relative path, 24 hex chars."""
     return hashlib.sha1(rel_path.encode("utf-8")).hexdigest()[:24]
+
+
+def table_key(schema_name: str, table_name: str) -> str:
+    """Stable key of a table inside a database: sha1 of ``schema.table``, 16 hex chars."""
+    return hashlib.sha1(f"{schema_name}.{table_name}".encode()).hexdigest()[:16]
 
 
 def _write_atomic(path: Path, text: str) -> None:
@@ -68,6 +78,7 @@ class ProfileStore:
         self.catalog_path = self.root_dir / "catalog.duckdb"
         self.tmp_catalog_path = self.root_dir / "catalog.duckdb.tmp"
         self.summary_path = self.root_dir / "last_scan.json"
+        self.summaries_dir = self.root_dir / "summaries"
 
     def _profile_path(self, rel_path: str) -> Path:
         return self.profiles_dir / f"{file_key(rel_path)}.json"
@@ -113,17 +124,23 @@ class ProfileStore:
         return profiles
 
     def prune(self, keep_rel_paths: set[str]) -> int:
-        """Delete profiles of files that were not discovered; returns how many."""
-        if not self.profiles_dir.is_dir():
-            return 0
+        """Delete profiles (and their summaries) of files that were not discovered.
+
+        Returns how many profiles were removed.
+        """
         keep = {file_key(rel) for rel in keep_rel_paths}
         removed = 0
-        for path in self.profiles_dir.iterdir():
-            if path.name.endswith(".tmp"):
-                path.unlink(missing_ok=True)
-            elif path.suffix == ".json" and path.stem not in keep:
-                path.unlink(missing_ok=True)
-                removed += 1
+        if self.profiles_dir.is_dir():
+            for path in self.profiles_dir.iterdir():
+                if path.name.endswith(".tmp"):
+                    path.unlink(missing_ok=True)
+                elif path.suffix == ".json" and path.stem not in keep:
+                    path.unlink(missing_ok=True)
+                    removed += 1
+        if self.summaries_dir.is_dir():
+            for folder in self.summaries_dir.iterdir():
+                if folder.is_dir() and folder.name not in keep:
+                    shutil.rmtree(folder, ignore_errors=True)
         return removed
 
     def save_summary(self, summary: ScanSummary) -> None:
@@ -138,6 +155,109 @@ class ProfileStore:
             return ScanSummary.model_validate_json(text)
         except ValidationError:
             return None
+
+
+class SummaryStore:
+    """JSON sidecars of per-table summaries next to the profiles (decision D-020).
+
+    A cached summary is valid while the database file's size and mtime, the
+    summary schema version and the DuckDB version match and it carries no
+    error; otherwise it is recomputed on request.
+    """
+
+    def __init__(self, cache_dir: Path, root: Path):
+        self.profiles = ProfileStore(cache_dir, root)
+        self.folder = self.profiles.summaries_dir
+
+    def path(self, rel_path: str, schema_name: str, table_name: str) -> Path:
+        return self.folder / file_key(rel_path) / f"{table_key(schema_name, table_name)}.json"
+
+    def load(
+        self, rel_path: str, schema_name: str, table_name: str, *, size_bytes: int, mtime_ns: int
+    ) -> TableSummary | None:
+        """The cached summary if it is still valid, else ``None``."""
+        path = self.path(rel_path, schema_name, table_name)
+        try:
+            summary = TableSummary.model_validate_json(path.read_text(encoding="utf-8"))
+        except (OSError, ValidationError):
+            return None
+        valid = (
+            summary.error is None
+            and (summary.rel_path, summary.schema_name, summary.table_name)
+            == (rel_path, schema_name, table_name)  # key collision guard
+            and summary.size_bytes == size_bytes
+            and summary.mtime_ns == mtime_ns
+            and summary.summary_schema_version == SUMMARY_SCHEMA_VERSION
+            and summary.duckdb_version == duckdb.__version__
+        )
+        return summary if valid else None
+
+    def save(self, summary: TableSummary) -> None:
+        path = self.path(summary.rel_path, summary.schema_name, summary.table_name)
+        _write_atomic(path, summary.model_dump_json())
+
+    def get_or_compute(
+        self,
+        db_path: str | Path,
+        rel_path: str,
+        schema_name: str,
+        table_name: str,
+        config: QueryConfig,
+        *,
+        row_count: int | None,
+        refresh: bool = False,
+    ) -> TableSummary:
+        """The valid cached summary, or a fresh one (computed, saved and returned).
+
+        The validity check uses the file's current size and mtime. A failure is
+        returned (and saved) as a summary with ``error`` set; it is never reused.
+        """
+        try:
+            stat = Path(db_path).stat()
+        except OSError as exc:
+            return self._failed(rel_path, schema_name, table_name, row_count, str(exc))
+        if not refresh:
+            cached = self.load(
+                rel_path,
+                schema_name,
+                table_name,
+                size_bytes=stat.st_size,
+                mtime_ns=stat.st_mtime_ns,
+            )
+            if cached is not None:
+                return cached
+        summary = summarize_table(
+            db_path,
+            schema_name,
+            table_name,
+            config,
+            row_count=row_count,
+            rel_path=rel_path,
+            size_bytes=stat.st_size,
+            mtime_ns=stat.st_mtime_ns,
+        )
+        self.save(summary)
+        return summary
+
+    @staticmethod
+    def _failed(
+        rel_path: str, schema_name: str, table_name: str, row_count: int | None, error: str
+    ) -> TableSummary:
+        return TableSummary(
+            rel_path=rel_path,
+            schema_name=schema_name,
+            table_name=table_name,
+            size_bytes=0,
+            mtime_ns=0,
+            duckdb_version=duckdb.__version__,
+            computed_at=datetime.now(UTC).isoformat(timespec="seconds"),
+            elapsed_s=0.0,
+            row_count=row_count,
+            sampled=False,
+            sample_rows=None,
+            columns=[],
+            error=error,
+        )
 
 
 def _recent_path(cache_dir: Path) -> Path:

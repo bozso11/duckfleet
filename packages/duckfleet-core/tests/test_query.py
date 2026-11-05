@@ -487,12 +487,12 @@ def test_preview_of_odd_names(qdb: Path, cfg: QueryConfig) -> None:
 
 def test_preview_times_out(qdb: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The preview runs under the same timeout; here the generated SQL is made slow."""
-    original = query._execute_limited
+    original = query.execute_limited
 
     def slow(con, sql, max_rows, timeout_s):
         return original(con, CROSS_JOIN, max_rows, timeout_s)
 
-    monkeypatch.setattr(query, "_execute_limited", slow)
+    monkeypatch.setattr(query, "execute_limited", slow)
     with pytest.raises(QueryError) as caught:
         preview_table(qdb, "main", "t", QueryConfig(timeout_s=0.5))
     assert caught.value.kind == "timeout"
