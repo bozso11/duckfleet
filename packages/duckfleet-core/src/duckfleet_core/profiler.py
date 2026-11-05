@@ -26,6 +26,7 @@ from duckfleet_core.models import (
     ProfileError,
     TableProfile,
 )
+from duckfleet_core.sqlutil import quote_ident
 from duckfleet_core.tags import extract_tags
 
 logger = logging.getLogger("duckfleet")
@@ -78,11 +79,6 @@ _MESSAGE_LIMIT = 500
 
 class NotDuckDBError(Exception):
     """The file header lacks the DuckDB magic bytes (never handed to DuckDB)."""
-
-
-def quote_ident(name: str) -> str:
-    """Quote an SQL identifier: wrap in ``"`` and double embedded ``"``."""
-    return '"' + name.replace('"', '""') + '"'
 
 
 def is_temporal_type(data_type: str) -> bool:

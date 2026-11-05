@@ -8,7 +8,11 @@ dependencies = [
     "pydantic>=2.7,<3",
     "platformdirs>=4",
     "psutil>=5.9",
+    "pytz>=2024.1",
 ]
+
+[project.optional-dependencies]
+export = ["pyarrow>=17"]
 
 [project.scripts]
 duckfleet = "duckfleet_core.cli:main"

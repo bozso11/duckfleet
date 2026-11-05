@@ -65,10 +65,10 @@ Last updated: 2026-11-05 (0.1.1).
 12. **Sampled statistics.** Above L-05 `non_null_count`, `approx_distinct` and
     numeric min/max describe the sample (`sampled=True`); temporal min/max
     are always exact. The row count is always exact.
-13. **`timestamptz` in Python.** The Python client needs `pytz` to fetch
-    `TIMESTAMP WITH TIME ZONE` values and it is not a dependency; the
-    profiler converts those columns to UTC inside the SQL instead, so their
-    min/max are UTC.
+13. **`timestamptz` in Python.** Historical since v0.2: `pytz` is a core
+    dependency (D-022), so the query layer fetches `TIMESTAMP WITH TIME ZONE`
+    values; they appear in the machine's time zone (D-026). The profiler still
+    converts those columns to UTC inside the SQL, so catalog min/max are UTC.
 14. **Per-table failure is per table.** If the stats query of one table fails,
     that table keeps its row count and columns but has no column stats and is
     flagged `table_error:<schema>.<table>`. A temporal value outside Python's

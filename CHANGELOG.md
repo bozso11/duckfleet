@@ -2,7 +2,27 @@
 
 ## Unreleased
 
-Nothing yet.
+v0.2 in progress (plan: `docs/PLAN_v0.2.md`).
+
+### Phase 1: query layer
+
+1. `duckfleet_core.query`: `QueryConfig`, `connection_config`, `open_readonly`
+   (read-only, extension autoload off, external access off, configuration
+   locked, fixed threads and memory), `run_query`, `export_query` (CSV and
+   Parquet in memory through Arrow), `preview_table`, `table_columns`,
+   `QueryResult`, `QueryError` (kinds `sql`, `read_only`, `blocked`, `timeout`,
+   `other`). Every query runs under a timeout enforced with `interrupt()`.
+2. `sqlutil.py` holds `quote_ident` and `qualified_name` (moved out of
+   `profiler.py`).
+3. `pytz>=2024.1` is a core dependency (D-022) and `pyarrow` the optional
+   extra `export`; `uv.lock` refreshed. `TIMESTAMP WITH TIME ZONE` rows now
+   fetch.
+4. Outcomes of the plan's open items: `TimeZone` is not accepted in the connect
+   config and a `SET TimeZone` before locking only reaches the first
+   connection of a process, so the session zone stays the machine's (D-026);
+   `to_arrow_table` is used with a `fetch_arrow_table` fallback.
+5. A CSV export of a result with list, struct or map columns fails with a
+   message that points to Parquet (the Arrow CSV writer has no nested types).
 
 ## 0.1.1 (2026-11-05)
 
