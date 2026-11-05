@@ -18,6 +18,9 @@ from duckfleet_core.store import ProfileStore, recent_roots, root_key
 
 RUN1 = "exp_01/run_01/metrics.duckdb"
 CORRUPT = "broken/corrupt.duckdb"
+HIGHBIT = "broken/highbit.duckdb"
+ENCRYPTED = "secure/encrypted.duckdb"
+DEMO_FAILURES = {(CORRUPT, "corrupt"), (HIGHBIT, "corrupt"), (ENCRYPTED, "encrypted")}
 
 
 def scan(fleet: Path, cache: Path, **options):
@@ -45,9 +48,9 @@ def snapshot(reader: CatalogReader) -> dict:
 
 def test_first_scan_of_the_demo_fleet(demo_fleet: Path, cache_dir: Path) -> None:
     summary, events = scan(demo_fleet, cache_dir, workers=1)
-    assert (summary.files_candidates, summary.files_rejected) == (11, 2)
-    assert (summary.files_profiled, summary.files_reused, summary.files_failed) == (11, 0, 1)
-    assert summary.files_walked == 14 and not summary.truncated
+    assert (summary.files_candidates, summary.files_rejected) == (13, 2)
+    assert (summary.files_profiled, summary.files_reused, summary.files_failed) == (13, 0, 3)
+    assert summary.files_walked == 16 and not summary.truncated
     assert summary.workers == 1 and summary.config.workers == 1
     assert summary.root == str(demo_fleet.resolve())
     assert {(r.rel_path, r.reason) for r in summary.rejected} == {
@@ -59,31 +62,31 @@ def test_first_scan_of_the_demo_fleet(demo_fleet: Path, cache_dir: Path) -> None
     databases = reader.databases()
     assert sum(d["status"] == "ok" for d in databases) == 10
     errors = [d for d in databases if d["status"] == "error"]
-    assert [(e["rel_path"], e["error_type"]) for e in errors] == [(CORRUPT, "corrupt")]
+    assert [(e["rel_path"], e["error_type"]) for e in errors] == sorted(DEMO_FAILURES)
     assert [f["n_members"] for f in reader.families("strict")] == [3, 3, 2, 1]
     assert [f["n_members"] for f in reader.families("loose")] == [6, 2, 1]
-    assert reader.scan_run()["files_candidates"] == 11
+    assert reader.scan_run()["files_candidates"] == 13
 
     kinds = [e["event"] for e in events]
-    assert kinds == ["discovered", "planned", *["profiled"] * 11, "catalog", "finished"]
+    assert kinds == ["discovered", "planned", *["profiled"] * 13, "catalog", "finished"]
     assert events[0] == {
         "event": "discovered",
-        "walked": 14,
-        "candidates": 11,
+        "walked": 16,
+        "candidates": 13,
         "rejected": 2,
         "truncated": False,
     }
-    assert events[1] == {"event": "planned", "to_profile": 11, "reused": 0}
+    assert events[1] == {"event": "planned", "to_profile": 13, "reused": 0}
     profiled = [e for e in events if e["event"] == "profiled"]
-    assert [e["done"] for e in profiled] == list(range(1, 12))
-    assert {e["total"] for e in profiled} == {11}
+    assert [e["done"] for e in profiled] == list(range(1, 14))
+    assert {e["total"] for e in profiled} == {13}
     bad = [e for e in profiled if e["status"] == "error"]
-    assert [(e["rel_path"], e["error_type"]) for e in bad] == [(CORRUPT, "corrupt")]
+    assert {(e["rel_path"], e["error_type"]) for e in bad} == DEMO_FAILURES
     assert all(e["error_type"] is None for e in profiled if e["status"] == "ok")
     assert events[-2] == {"event": "catalog", "path": summary.catalog_path}
     finished = events[-1]["summary"]
     assert json.loads(json.dumps(finished)) == finished  # JSON-serialisable
-    assert finished["files_candidates"] == 11 and finished["run_id"] == summary.run_id
+    assert finished["files_candidates"] == 13 and finished["run_id"] == summary.run_id
 
 
 def test_cache_directory_contents(demo_fleet: Path, cache_dir: Path) -> None:
@@ -91,7 +94,7 @@ def test_cache_directory_contents(demo_fleet: Path, cache_dir: Path) -> None:
     store = ProfileStore(cache_dir, demo_fleet)
     assert Path(summary.catalog_path) == store.catalog_path
     assert store.catalog_path.is_file() and not store.tmp_catalog_path.exists()
-    assert len(list(store.profiles_dir.glob("*.json"))) == 11
+    assert len(list(store.profiles_dir.glob("*.json"))) == 13
     assert (store.root_dir / "root.txt").read_text(encoding="utf-8") == str(demo_fleet.resolve())
     assert store.load_summary() == summary
     assert recent_roots(cache_dir)[0]["root"] == str(demo_fleet.resolve())
@@ -119,7 +122,7 @@ def test_one_worker_and_a_pool_produce_the_same_catalog(demo_fleet: Path, tmp_pa
     single, _ = scan(demo_fleet, tmp_path / "c1", workers=1)
     pooled, events = scan(demo_fleet, tmp_path / "c2", workers=2)  # real spawn pool
     assert pooled.workers == 2
-    assert [e["done"] for e in events if e["event"] == "profiled"] == list(range(1, 12))
+    assert [e["done"] for e in events if e["event"] == "profiled"] == list(range(1, 14))
     assert snapshot(CatalogReader(single.catalog_path)) == snapshot(
         CatalogReader(pooled.catalog_path)
     )
@@ -130,21 +133,21 @@ def test_second_scan_reuses_ok_profiles_and_retries_failures(
 ) -> None:
     scan(demo_fleet, cache_dir, workers=1)
     summary, events = scan(demo_fleet, cache_dir, workers=1)
-    assert (summary.files_reused, summary.files_profiled, summary.files_failed) == (10, 1, 1)
-    assert summary.files_candidates == 11
+    assert (summary.files_reused, summary.files_profiled, summary.files_failed) == (10, 3, 3)
+    assert summary.files_candidates == 13
     assert [e for e in events if e["event"] == "planned"] == [
-        {"event": "planned", "to_profile": 1, "reused": 10}
+        {"event": "planned", "to_profile": 3, "reused": 10}
     ]
     profiled = [e for e in events if e["event"] == "profiled"]
-    assert [(e["rel_path"], e["error_type"]) for e in profiled] == [(CORRUPT, "corrupt")]
+    assert {(e["rel_path"], e["error_type"]) for e in profiled} == DEMO_FAILURES
     reader = CatalogReader(summary.catalog_path)
-    assert len(reader.databases()) == 11 and len(reader.families("strict")) == 4
+    assert len(reader.databases()) == 13 and len(reader.families("strict")) == 4
 
 
 def test_full_scan_reuses_nothing(demo_fleet: Path, cache_dir: Path) -> None:
     scan(demo_fleet, cache_dir, workers=1)
     summary, _ = scan(demo_fleet, cache_dir, workers=1, full=True)
-    assert (summary.files_reused, summary.files_profiled) == (0, 11)
+    assert (summary.files_reused, summary.files_profiled) == (0, 13)
 
 
 def test_deleting_a_file_prunes_its_profile(fresh_demo_fleet: Path, cache_dir: Path) -> None:
@@ -153,9 +156,9 @@ def test_deleting_a_file_prunes_its_profile(fresh_demo_fleet: Path, cache_dir: P
     assert store.load("legacy/old.db") is not None
     (fresh_demo_fleet / "legacy" / "old.db").unlink()
     summary, _ = scan(fresh_demo_fleet, cache_dir, workers=1)
-    assert summary.files_candidates == 10 and summary.files_reused == 9
+    assert summary.files_candidates == 12 and summary.files_reused == 9
     assert store.load("legacy/old.db") is None
-    assert len(list(store.profiles_dir.glob("*.json"))) == 10
+    assert len(list(store.profiles_dir.glob("*.json"))) == 12
     reader = CatalogReader(summary.catalog_path)
     assert "legacy/old.db" not in {d["rel_path"] for d in reader.databases()}
     assert [f["n_members"] for f in reader.families("strict")] == [3, 3, 2]
@@ -169,7 +172,7 @@ def test_a_changed_file_is_profiled_again(fresh_demo_fleet: Path, cache_dir: Pat
     con.close()
     summary, events = scan(fresh_demo_fleet, cache_dir, workers=1)
     reprofiled = {e["rel_path"] for e in events if e["event"] == "profiled"}
-    assert reprofiled == {RUN1, CORRUPT}
+    assert reprofiled == {RUN1, CORRUPT, HIGHBIT, ENCRYPTED}
     config = [
         t for t in CatalogReader(summary.catalog_path).tables(RUN1) if t["table_name"] == "config"
     ]
@@ -200,6 +203,22 @@ def test_profiles_from_another_schema_version_are_profiled_again(
     assert summary.files_reused == 9
 
 
+def test_profiles_from_another_duckdb_version_are_profiled_again(
+    fresh_demo_fleet: Path, cache_dir: Path
+) -> None:
+    """P-01: after a DuckDB upgrade type spellings can change, so nothing is reused."""
+    scan(fresh_demo_fleet, cache_dir, workers=1)
+    store = ProfileStore(cache_dir, fresh_demo_fleet)
+    stale = store.load("legacy/old.db")
+    assert stale is not None and stale.duckdb_version == duckdb.__version__
+    store.save(stale.model_copy(update={"duckdb_version": "0.9.0"}))
+    summary, events = scan(fresh_demo_fleet, cache_dir, workers=1)
+    assert "legacy/old.db" in {e["rel_path"] for e in events if e["event"] == "profiled"}
+    assert summary.files_reused == 9
+    reloaded = store.load("legacy/old.db")
+    assert reloaded is not None and reloaded.duckdb_version == duckdb.__version__
+
+
 def test_truncated_walk(demo_fleet: Path, cache_dir: Path) -> None:
     summary, events = scan(demo_fleet, cache_dir, workers=1, max_files=3)
     assert summary.truncated and summary.files_candidates == 3
@@ -215,7 +234,7 @@ def test_missing_root_raises(tmp_path: Path, cache_dir: Path) -> None:
 
 def test_works_without_an_event_callback(demo_fleet: Path, cache_dir: Path) -> None:
     summary = run_scan(demo_fleet, ScanConfig(cache_dir=str(cache_dir), workers=1))
-    assert summary.files_candidates == 11
+    assert summary.files_candidates == 13
 
 
 def test_workers_default_to_cpu_count_minus_two(
@@ -233,7 +252,7 @@ def test_workers_default_to_cpu_count_minus_two(
 def test_non_ascii_root_with_a_space_and_a_pool(tmp_path: Path) -> None:
     fleet = make_demo_fleet(tmp_path / "données été" / "my fleet")
     summary, _ = scan(fleet, tmp_path / "cache dir é", workers=2)
-    assert (summary.files_candidates, summary.files_failed) == (11, 1)
+    assert (summary.files_candidates, summary.files_failed) == (13, 3)
     names = {d["rel_path"] for d in CatalogReader(summary.catalog_path).databases()}
     assert RUN1 in names
 
@@ -244,11 +263,67 @@ def test_a_locked_file_is_reported_not_fatal(
 ) -> None:
     with hold_open(fresh_demo_fleet / "held" / "writer.duckdb"):
         summary, events = scan(fresh_demo_fleet, cache_dir, workers=1)
-    assert summary.files_candidates == 12 and summary.files_failed == 2
+    assert summary.files_candidates == 14 and summary.files_failed == 4
     locked = [
         e for e in events if e["event"] == "profiled" and e["rel_path"] == "held/writer.duckdb"
     ]
     assert [(e["status"], e["error_type"]) for e in locked] == [("error", "locked")]
+
+
+# ---------------------------------------------------------------- early stop of the pool
+
+
+class StopScan(Exception):
+    pass
+
+
+def test_a_consumer_error_cancels_the_queued_files(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P-02: with a real spawn pool, an error after the first saved profile must not make the
+    pool profile all the queued files first.
+    """
+    fleet = tmp_path / "many"
+    fleet.mkdir()
+    for i in range(20):
+        con = duckdb.connect(str(fleet / f"db_{i:02d}.duckdb"))
+        con.execute("CREATE TABLE t AS SELECT range AS i FROM range(2000)")
+        con.close()
+    config = ScanConfig(cache_dir=str(tmp_path / "cache"), workers=2)
+    discovery = coordinator.discover(fleet, config)
+    assert len(discovery.candidates) == 20
+    store = ProfileStore(tmp_path / "cache", discovery.root)
+    stream = coordinator._profiles_in_pool(
+        discovery.candidates, config.model_dump(mode="json"), config, 2
+    )
+    with pytest.raises(StopScan):
+        for _candidate, result in stream:
+            store.save(coordinator.DatabaseProfile.model_validate(result))
+            raise StopScan
+    stream.close()  # what run_scan does through contextlib.closing
+    assert 1 <= len(list(store.profiles_dir.glob("*.json"))) < 20
+
+
+def test_the_pool_is_shut_down_with_cancel_futures_when_the_consumer_stops(
+    demo_fleet: Path, cache_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    FakeExecutor.instances = []
+    monkeypatch.setattr(coordinator, "ProcessPoolExecutor", FakeExecutor)
+    seen = []
+    with pytest.raises(StopScan):
+        run_scan(
+            demo_fleet,
+            ScanConfig(cache_dir=str(cache_dir), workers=4),
+            lambda event: (seen.append(event), _raise_on_first_profile(event)),
+        )
+    (executor,) = FakeExecutor.instances
+    assert executor.shutdowns == [{"wait": True, "cancel_futures": True}]
+    assert sum(e["event"] == "profiled" for e in seen) == 1
+
+
+def _raise_on_first_profile(event: dict) -> None:
+    if event["event"] == "profiled":
+        raise StopScan
 
 
 # ---------------------------------------------------------------- worker crashes
@@ -259,15 +334,15 @@ class FakeExecutor:
 
     ok_jobs = 4
     break_on_submit = False
+    instances: list[FakeExecutor] = []
 
     def __init__(self, max_workers=None, mp_context=None):
         self.submitted = 0
+        self.shutdowns: list[dict] = []
+        FakeExecutor.instances.append(self)
 
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *exc):
-        return False
+    def shutdown(self, wait=True, *, cancel_futures=False):
+        self.shutdowns.append({"wait": wait, "cancel_futures": cancel_futures})
 
     def submit(self, fn, *args):
         self.submitted += 1
@@ -287,20 +362,20 @@ def test_a_broken_pool_marks_unfinished_files_worker_crashed(
     monkeypatch.setattr(coordinator, "ProcessPoolExecutor", FakeExecutor)
     summary, events = scan(demo_fleet, cache_dir, workers=4)
     profiled = [e for e in events if e["event"] == "profiled"]
-    assert len(profiled) == 11
+    assert len(profiled) == 13
     crashed = [e for e in profiled if e["error_type"] == "worker_crashed"]
-    assert len(crashed) == 7  # 11 files, the first 4 finished before the pool broke
+    assert len(crashed) == 9  # 13 files, the first 4 finished before the pool broke
     reader = CatalogReader(summary.catalog_path)
     rows = {d["rel_path"]: d for d in reader.databases()}
-    assert len(rows) == 11  # the catalog is still built, crashed files included
+    assert len(rows) == 13  # the catalog is still built, crashed files included
     assert {rows[e["rel_path"]]["error_type"] for e in crashed} == {"worker_crashed"}
     assert all(rows[e["rel_path"]]["status"] == "error" for e in crashed)
     assert all("worker process died" in rows[e["rel_path"]]["error_message"] for e in crashed)
-    assert summary.files_failed >= 7
+    assert summary.files_failed >= 9
     # a rescan retries them (errors are never reused)
     monkeypatch.undo()
     again, _ = scan(demo_fleet, cache_dir, workers=1)
-    assert again.files_profiled >= 7 and again.files_failed == 1
+    assert again.files_profiled >= 9 and again.files_failed == 3
 
 
 def test_a_pool_that_breaks_during_submit(
@@ -313,6 +388,6 @@ def test_a_pool_that_breaks_during_submit(
     monkeypatch.setattr(coordinator, "ProcessPoolExecutor", BreakingExecutor)
     summary, events = scan(demo_fleet, cache_dir, workers=4)
     profiled = [e for e in events if e["event"] == "profiled"]
-    assert len(profiled) == 11
-    assert sum(e["error_type"] == "worker_crashed" for e in profiled) == 8
-    assert summary.files_candidates == 11
+    assert len(profiled) == 13
+    assert sum(e["error_type"] == "worker_crashed" for e in profiled) == 10
+    assert summary.files_candidates == 13

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from datetime import UTC, date, datetime, timedelta, timezone
 from pathlib import Path
 
 import duckdb
@@ -167,7 +168,108 @@ def test_missing_file(tmp_path: Path) -> None:
 
 def test_never_raises_with_a_bad_config(demo_fleet: Path) -> None:
     result = profile_database(str(demo_fleet / RUN1), RUN1, {"max_files": "not a number"})
-    assert DatabaseProfile.model_validate(result).status == "ok"
+    bad = DatabaseProfile.model_validate(result)
+    assert bad.status == "error" and bad.error is not None and "max_files" in bad.error.message
+
+
+def test_an_invalid_tag_pattern_gives_an_error_profile_not_an_exception(
+    demo_fleet: Path,
+) -> None:
+    """R-03: ``profile_database`` never raises, with 1 and with N workers alike."""
+    config = ScanConfig().model_dump(mode="json") | {"tag_patterns": ["("]}
+    result = profile_database(str(demo_fleet / RUN1), RUN1, config)
+    bad = DatabaseProfile.model_validate(result)
+    assert bad.status == "error" and bad.tags == {}
+    assert bad.error is not None and "invalid tag pattern '('" in bad.error.message
+    assert bad.size_bytes > 0 and bad.rel_path == RUN1
+
+
+def test_file_facts_survive_a_pattern_that_was_never_validated(tmp_path: Path) -> None:
+    path = make_db(tmp_path / "t.duckdb", "CREATE TABLE t (i INTEGER)")
+    config = ScanConfig.model_construct(tag_patterns=["("])  # skips the validator
+    facts = profiler._file_facts(path, "t.duckdb", config)
+    assert facts["tags"] == {}
+
+
+def test_a_valid_pattern_that_matches_nothing_gives_no_tags(demo_fleet: Path) -> None:
+    p = profile(demo_fleet / RUN1, RUN1, tag_patterns=[r"(?P<key>zz)(?P<value>\d{9})"])
+    assert p.status == "ok" and p.tags == {}
+
+
+def test_infinite_timestamps_never_open_a_time_window(tmp_path: Path) -> None:
+    """R-02: 'infinity' and '-infinity' used to become year 9999 and year 1."""
+    path = make_db(
+        tmp_path / "inf.duckdb",
+        "CREATE TABLE ts (c TIMESTAMP)",
+        "INSERT INTO ts VALUES ('2026-01-01 10:00:00'), ('2026-01-03 10:00:00'), "
+        "('infinity'), ('-infinity')",
+        "CREATE TABLE dt (c DATE)",
+        "INSERT INTO dt VALUES (DATE '2026-02-01'), (DATE '2026-02-05'), (DATE 'infinity')",
+        "CREATE TABLE tz (c TIMESTAMPTZ)",
+        "INSERT INTO tz VALUES ('2026-03-01 10:00:00+00'), ('2026-03-02 10:00:00+00'), "
+        "('infinity'::TIMESTAMPTZ), ('-infinity'::TIMESTAMPTZ)",
+        "CREATE TABLE only_inf (c TIMESTAMP, v INTEGER)",
+        "INSERT INTO only_inf VALUES ('infinity', 1), ('-infinity', 2)",
+    )
+    p = profile(path)
+    assert p.status == "ok" and p.health == []
+    ts, dt, tz, only_inf = (table_of(p, name) for name in ("ts", "dt", "tz", "only_inf"))
+    assert (ts.time_min, ts.time_max) == ("2026-01-01T10:00:00", "2026-01-03T10:00:00")
+    assert (dt.time_min, dt.time_max) == ("2026-02-01T00:00:00", "2026-02-05T00:00:00")
+    assert (tz.time_min, tz.time_max) == ("2026-03-01T10:00:00", "2026-03-02T10:00:00")
+    assert ts.columns[0].stats is not None and ts.columns[0].stats.max == "2026-01-03T10:00:00"
+    assert (only_inf.time_min, only_inf.time_max) == (None, None)
+    assert only_inf.columns[0].stats is not None and only_inf.columns[0].stats.min is None
+    assert (p.time_min, p.time_max) == ("2026-01-01T10:00:00", "2026-03-02T10:00:00")
+
+
+def test_infinite_timestamps_on_the_sampled_path(tmp_path: Path) -> None:
+    path = make_db(
+        tmp_path / "inf2.duckdb",
+        "CREATE TABLE ts AS SELECT TIMESTAMP '2026-01-01 00:00:00' + to_hours(i::INTEGER) AS c "
+        "FROM range(50) t(i)",
+        "INSERT INTO ts VALUES ('infinity'), ('-infinity')",
+    )
+    p = profile(path, stats_row_threshold=10, stats_sample_rows=5)
+    ts = table_of(p, "ts")
+    assert ts.columns[0].stats is not None and ts.columns[0].stats.sampled
+    assert (ts.time_min, ts.time_max) == ("2026-01-01T00:00:00", "2026-01-03T01:00:00")
+
+
+@pytest.mark.parametrize(
+    "value",
+    [datetime.max, datetime.min, date.max, date.min, datetime.max.replace(tzinfo=UTC)],
+)
+def test_sentinel_values_are_not_times(value) -> None:
+    assert profiler._as_datetime(value) is None
+
+
+def test_ordinary_values_still_convert() -> None:
+    assert profiler._as_datetime(date(2026, 1, 2)) == datetime(2026, 1, 2)
+    assert profiler._as_datetime(datetime(2026, 1, 2, 3, 4, 5)) == datetime(2026, 1, 2, 3, 4, 5)
+    aware = datetime(2026, 1, 2, 10, tzinfo=timezone(timedelta(hours=2)))
+    assert profiler._as_datetime(aware) == datetime(2026, 1, 2, 8)
+
+
+def test_a_temporal_value_outside_the_python_range_is_a_table_error(tmp_path: Path) -> None:
+    """R-05: year 10000 cannot be a Python datetime; the window is dropped and flagged."""
+    path = make_db(
+        tmp_path / "range.duckdb",
+        "CREATE TABLE far (c TIMESTAMP, d DATE, n INTEGER)",
+        "INSERT INTO far VALUES ('2026-01-01 00:00:00', DATE '2026-01-01', 1), "
+        "(TIMESTAMP '10000-01-01 00:00:00', DATE '2026-01-02', 2)",
+        "CREATE TABLE near (c TIMESTAMP)",
+        "INSERT INTO near VALUES ('2026-05-01 00:00:00')",
+    )
+    p = profile(path)
+    far = table_of(p, "far")
+    assert far.error == "temporal value outside the supported range in column c"
+    assert (far.time_min, far.time_max) == (None, None)
+    assert far.row_count == 2 and far.columns[2].stats is not None  # the rest is kept
+    assert "table_error:main.far" in p.health
+    near = table_of(p, "near")
+    assert near.error is None and near.time_min == "2026-05-01T00:00:00"
+    assert (p.time_min, p.time_max) == ("2026-05-01T00:00:00", "2026-05-01T00:00:00")
 
 
 def test_views_are_listed_but_not_fingerprinted_by_default(tmp_path: Path) -> None:

@@ -42,9 +42,9 @@ def test_scan_through_the_subprocess(tmp_path: Path) -> None:
     assert result.stray_stdout == []
     kinds = [e["event"] for e in events]
     assert kinds[:2] == ["discovered", "planned"] and kinds[-2:] == ["catalog", "finished"]
-    assert kinds.count("profiled") == 11
+    assert kinds.count("profiled") == 13
     assert result.summary is not None
-    assert result.summary["workers"] == 2 and result.summary["files_candidates"] == 11
+    assert result.summary["workers"] == 2 and result.summary["files_candidates"] == 13
     assert Path(result.summary["catalog_path"]).is_file()
 
     again: list[dict] = []
@@ -52,7 +52,7 @@ def test_scan_through_the_subprocess(tmp_path: Path) -> None:
         str(fleet), ScanOptions(workers=1, cache_dir=str(tmp_path / "cache dir")), again.append
     )
     assert second.ok and second.summary is not None
-    assert (second.summary["files_reused"], second.summary["files_profiled"]) == (10, 1)
+    assert (second.summary["files_reused"], second.summary["files_profiled"]) == (10, 3)
 
 
 def test_the_default_worker_count_is_visible_in_the_summary(tmp_path: Path) -> None:

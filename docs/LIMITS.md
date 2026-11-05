@@ -5,12 +5,12 @@ happens beyond it. Numbers marked (TBC) are proposals. The v0.1 acceptance
 run used the demo fleet only, so they stay (TBC) until a real fleet has been
 scanned.
 
-Last updated: 2026-11-04 (v0.1 implemented).
+Last updated: 2026-11-05 (0.1.1).
 
 | ID | Limit | Default | Config | Beyond the limit | Since |
 |---|---|---|---|---|---|
 | L-01 | Files discovered per root | 1,000 (TBC) | `ScanConfig.max_files`, `--max-files` | walk stops at the first further DuckDB file, which is listed as rejected `over_max_files`; `truncated=True`, warning in UI and report. A root with exactly `max_files` files is not truncated | v0.1 |
-| L-02 | Worker processes | `max(1, cpu_count - 2)` | `ScanConfig.workers`, `--workers` | user choice; more workers than cores oversubscribes | v0.1 |
+| L-02 | Worker processes | `max(1, cpu_count - 2)`, at most 61 | `ScanConfig.workers`, `--workers` | capped at 61 (`MAX_POOL_WORKERS`, the Windows limit of `ProcessPoolExecutor`), also for an explicit value; more workers than cores oversubscribes | v0.1 |
 | L-03 | DuckDB threads per worker | 1 | `ScanConfig.worker_threads` | parallelism comes from the process count | v0.1 |
 | L-04 | Memory limit per worker | `min(2048 MB, total_ram / 2 / workers)`, floor 256 MB (TBC) | `ScanConfig.worker_memory_limit_mb` | DuckDB spills or fails the query; the file is recorded as error | v0.1 |
 | L-05 | Full column stats | tables up to 20 M rows (TBC) | `ScanConfig.stats_row_threshold` | non-temporal stats on a sample, `sampled=True` | v0.1 |
@@ -39,11 +39,16 @@ Last updated: 2026-11-04 (v0.1 implemented).
 4. **Blocking scan.** In v0.1 the UI page waits behind a progress bar until
    the scan ends. The CLI can run the scan independently.
 5. **No scan cancel** in v0.1; closing the page does not stop the
-   subprocess, which finishes and writes the catalog.
+   subprocess, which finishes and writes the catalog. A click on another
+   widget during a scan makes Streamlit rerun the script inside the progress
+   callback: the scan still finishes and writes the catalog (stdout is
+   drained), but the finished notice and the active root are lost; press
+   **Load existing catalog**.
 6. **Heuristics.** Time windows use declared temporal column types only;
    epoch integers and date strings are not detected. Tags come from path
    tokens matching the default patterns. See `docs/TUNING.md`.
-7. **Encrypted files** are not readable until F-SCAN-18 is built.
+7. **Encrypted files** are not readable until F-SCAN-18 is built; they are
+   listed with the error `encrypted`.
 8. **Network drives** work but scan at network speed; no special handling.
 9. **Views** are listed but not fingerprinted and not row-counted by
    default; a view that fails to bind is recorded as a table error.
@@ -64,16 +69,22 @@ Last updated: 2026-11-04 (v0.1 implemented).
     `TIMESTAMP WITH TIME ZONE` values and it is not a dependency; the
     profiler converts those columns to UTC inside the SQL instead, so their
     min/max are UTC.
-14. **Per-table failure is per table.** If the stats query of one table fails
-    (for example a value outside the Python date range), that table keeps its
-    row count and columns but has no column stats and is flagged
-    `table_error:<schema>.<table>`.
+14. **Per-table failure is per table.** If the stats query of one table fails,
+    that table keeps its row count and columns but has no column stats and is
+    flagged `table_error:<schema>.<table>`. A temporal value outside Python's
+    datetime range (for example year 10000) does not fail the query: the
+    column's min/max come back as text, the table's time window is cleared, the
+    other stats are kept, and the table carries the error `temporal value
+    outside the supported range in column <name>` (also `table_error:`).
+    `infinity` and `-infinity` are skipped when the window is computed.
 15. **Reuse of cached profiles** compares size, mtime, profile schema version
     and the presence of the `.wal` sibling. A file that changes without a
     different size or mtime, or a WAL whose content changes while it stays
     present, is not noticed; `--full` re-profiles everything. Changed scan
     options (tag patterns, stats thresholds, views in fingerprints) also need
-    `--full`.
+    `--full`. A profile with `table_error:*` health flags has status `ok` and
+    is reused until the file changes. A different DuckDB version always
+    re-profiles (a partial rescan cannot mix type spellings).
 16. **Pool size.** `ScanSummary.workers` is the configured count
     (`max(1, cpu_count - 2)` by default); the pool never starts more
     processes than there are files to profile, and one file or one worker

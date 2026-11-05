@@ -5,7 +5,7 @@ Status values: `done vX` (shipped in version X), `planned vX` (in the
 version ladder), `open option` (not scheduled), `out of scope`. Update the
 row in the same commit that changes the behaviour.
 
-Last updated: 2026-11-04 (v0.1 implemented; later versions not started).
+Last updated: 2026-11-05 (0.1.1; v0.2 in progress).
 
 ## Discovery and scanning
 
@@ -19,10 +19,10 @@ Last updated: 2026-11-04 (v0.1 implemented; later versions not started).
 | F-SCAN-06 | Cheap column stats: non-null count, min/max for numeric and temporal, approx distinct | done v0.1 | L-05, L-06 | sampled above threshold |
 | F-SCAN-07 | Time window per table and per file from temporal columns | done v0.1 | | TUNING temporal-types, timezones |
 | F-SCAN-08 | Health flags: WAL sibling, empty database, no temporal columns, per-table errors | done v0.1 | | |
-| F-SCAN-09 | Error classification: locked, not_duckdb, corrupt, incompatible_version, encrypted, missing, worker_crashed | done v0.1 | L-10 | substrings per installed duckdb; locked, not_duckdb, corrupt and missing are covered by tests on both OSes; incompatible_version and encrypted match the message only (no fixture); a writer-held file is `locked` on both OSes |
-| F-SCAN-10 | Profile cache; rescan reuses unchanged files (size + mtime + WAL presence) | done v0.1 | | `--full` to force; failed files are always retried |
+| F-SCAN-09 | Error classification: locked, not_duckdb, corrupt, incompatible_version, encrypted, missing, worker_crashed | done v0.1 | L-10 | substrings per installed duckdb; locked, not_duckdb, corrupt, encrypted and missing are covered by tests on both OSes (the demo fleet has a corrupt, a high-bit-header and an encrypted file); incompatible_version matches the message only (no fixture); a writer-held file is `locked` on both OSes |
+| F-SCAN-10 | Profile cache; rescan reuses unchanged files (size + mtime + WAL presence + profile schema version + DuckDB version) | done v0.1 | | `--full` to force; failed files are always retried |
 | F-SCAN-11 | Catalog as a DuckDB file rebuilt from cached profiles | done v0.1 | | user cache dir |
-| F-SCAN-12 | Tags from path tokens (exp_12, run-03, key=value) | done v0.1 | | TUNING tag-patterns |
+| F-SCAN-12 | Tags from path tokens (exp_12, run-03, key=value) | done v0.1 | | TUNING tag-patterns; `scan --tag-pattern REGEX` (0.1.1) replaces the defaults, patterns are validated |
 | F-SCAN-13 | Scan progress as JSON lines for the UI | done v0.1 | | |
 | F-SCAN-14 | Non-blocking scan (UI usable while scanning) | open option | | v0.1 blocks behind a progress bar |
 | F-SCAN-15 | Cancel a running scan | open option | | |

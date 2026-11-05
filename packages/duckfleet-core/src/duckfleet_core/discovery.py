@@ -21,6 +21,7 @@ MAGIC = b"DUCK"
 MAGIC_OFFSET = 8
 STORAGE_VERSION_OFFSET = 12
 HEADER_BYTES = 20  # magic ends at byte 12, the uint64 storage version at byte 20 (verified)
+_MAX_STORAGE_VERSION = 2**63 - 1  # a larger value is garbage, not a version (R-01)
 _SKIP_SUFFIXES = (".wal", ".tmp")
 
 
@@ -53,7 +54,9 @@ def read_header(path: Path) -> tuple[bool, int | None]:
     """Return ``(is_duckdb, storage_version)`` from the first 20 bytes of a file.
 
     Bytes 8..11 are ``b"DUCK"``; bytes 12..19 are the storage version as a
-    little-endian uint64. Raises ``OSError`` when the file cannot be read.
+    little-endian uint64; a value above ``2**63 - 1`` is reported as ``None``
+    (a header with the magic but garbage after it). Raises ``OSError`` when the
+    file cannot be read.
     """
     with open(path, "rb") as handle:
         head = handle.read(HEADER_BYTES)
@@ -61,7 +64,8 @@ def read_header(path: Path) -> tuple[bool, int | None]:
         return False, None
     if len(head) < HEADER_BYTES:
         return True, None
-    return True, int.from_bytes(head[STORAGE_VERSION_OFFSET:HEADER_BYTES], "little")
+    version = int.from_bytes(head[STORAGE_VERSION_OFFSET:HEADER_BYTES], "little")
+    return True, (version if version <= _MAX_STORAGE_VERSION else None)
 
 
 def looks_locked(exc: BaseException) -> bool:
@@ -91,6 +95,10 @@ def discover(root: Path, config: ScanConfig) -> DiscoveryResult:
 
     extensions = {ext.lower() for ext in config.extensions}
     excluded = {os.path.normcase(name) for name in config.exclude_dirs}
+    # R-06: the cache directory must not be walked, or the catalog becomes a fleet member.
+    cache_real = os.path.normcase(os.path.realpath(config.resolved_cache_dir()))
+    root_real = os.path.normcase(os.path.realpath(root))
+    cache_inside_root = cache_real.startswith(root_real.rstrip(os.sep) + os.sep)
 
     candidates: list[Candidate] = []
     rejected: list[RejectedFile] = []
@@ -105,7 +113,15 @@ def discover(root: Path, config: ScanConfig) -> DiscoveryResult:
                 dirnames[:] = []
                 continue
             visited_real.add(real)
-        dirnames[:] = sorted(d for d in dirnames if os.path.normcase(d) not in excluded)
+        dirnames[:] = sorted(
+            d
+            for d in dirnames
+            if os.path.normcase(d) not in excluded
+            and not (
+                cache_inside_root
+                and os.path.normcase(os.path.realpath(os.path.join(dirpath, d))) == cache_real
+            )
+        )
 
         for name in sorted(filenames):
             walked += 1

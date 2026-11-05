@@ -5,9 +5,10 @@ are, which table structures exist and how many of each, which time windows
 and runs they hold, then deep dive into one file, query it and plot its
 columns.
 
-Status: v0.1 (scan + fleet overview) is implemented; what it does is in
-`CHANGELOG.md` (0.1.0) and `docs/FEATURES.md`, what comes next in
-`docs/ROADMAP.md`. The plan it was built from is `docs/PLAN_v0.1.md`.
+Status: v0.1.1 (scan + fleet overview, with the fixes of the v0.1 review) is
+implemented; what it does is in `CHANGELOG.md` and `docs/FEATURES.md`, what
+comes next in `docs/ROADMAP.md`. The plans are `docs/PLAN_v0.1.md` and
+`docs/PLAN_v0.2.md`.
 
 ## Quick start
 

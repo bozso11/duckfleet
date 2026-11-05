@@ -6,6 +6,7 @@ Progress is reported through the ``on_event`` callback with the events of
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import multiprocessing
 import uuid
@@ -43,7 +44,8 @@ def _can_reuse(existing: DatabaseProfile | None, candidate: Candidate) -> bool:
     """Reuse rule (plan 3.3 rule 3): unchanged size, mtime and schema version, status ok.
 
     The WAL sibling flag must match too, so a file that gained or lost its WAL
-    is profiled again.
+    is profiled again, and so is every file after a DuckDB upgrade (P-01: type
+    spellings can change between versions and would split a family).
     """
     return (
         existing is not None
@@ -52,6 +54,7 @@ def _can_reuse(existing: DatabaseProfile | None, candidate: Candidate) -> bool:
         and existing.mtime_ns == candidate.mtime_ns
         and existing.profile_schema_version == PROFILE_SCHEMA_VERSION
         and existing.has_wal == candidate.has_wal
+        and existing.duckdb_version == duckdb.__version__
     )
 
 
@@ -87,10 +90,13 @@ def _profiles_in_pool(
     """Yield ``(candidate, profile dict or DatabaseProfile)`` as the workers finish.
 
     A broken pool (a worker died) turns every unfinished candidate into a
-    ``worker_crashed`` profile (docs/LIMITS.md L-10).
+    ``worker_crashed`` profile (docs/LIMITS.md L-10). When the consumer stops
+    early (an exception, Ctrl-C) the queued files are cancelled instead of
+    being profiled first (P-02).
     """
     context = multiprocessing.get_context("spawn")  # same behaviour on Windows and Linux
-    with ProcessPoolExecutor(max_workers=pool_size, mp_context=context) as pool:
+    pool = ProcessPoolExecutor(max_workers=pool_size, mp_context=context)
+    try:
         futures: dict[Future, Candidate] = {}
         unsubmitted: list[Candidate] = []
         crash: BaseException = BrokenProcessPool("the process pool broke")
@@ -114,6 +120,8 @@ def _profiles_in_pool(
                 yield candidate, _failed_profile(candidate, config, "other", exc)
         for candidate in unsubmitted:
             yield candidate, _failed_profile(candidate, config, "worker_crashed", crash)
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
 
 
 def run_scan(root: Path, config: ScanConfig, on_event: EventCallback | None = None) -> ScanSummary:
@@ -162,27 +170,28 @@ def run_scan(root: Path, config: ScanConfig, on_event: EventCallback | None = No
         else _profiles_in_pool(to_profile, config_dict, resolved, pool_size)
     )
     done = 0
-    for candidate, result in stream:
-        if isinstance(result, DatabaseProfile):
-            profile = result
-        else:
-            try:
-                profile = DatabaseProfile.model_validate(result)
-            except Exception as exc:
-                profile = _failed_profile(candidate, resolved, "other", exc)
-        store.save(profile)
-        done += 1
-        emit(
-            {
-                "event": "profiled",
-                "done": done,
-                "total": len(to_profile),
-                "rel_path": profile.rel_path,
-                "status": profile.status,
-                "error_type": profile.error.type if profile.error else None,
-                "seconds": profile.profile_seconds,
-            }
-        )
+    with contextlib.closing(stream):  # an error below must stop the pool at once (P-02)
+        for candidate, result in stream:
+            if isinstance(result, DatabaseProfile):
+                profile = result
+            else:
+                try:
+                    profile = DatabaseProfile.model_validate(result)
+                except Exception as exc:
+                    profile = _failed_profile(candidate, resolved, "other", exc)
+            store.save(profile)
+            done += 1
+            emit(
+                {
+                    "event": "profiled",
+                    "done": done,
+                    "total": len(to_profile),
+                    "rel_path": profile.rel_path,
+                    "status": profile.status,
+                    "error_type": profile.error.type if profile.error else None,
+                    "seconds": profile.profile_seconds,
+                }
+            )
 
     store.prune({candidate.rel_path for candidate in discovery.candidates})
     profiles = store.load_all()

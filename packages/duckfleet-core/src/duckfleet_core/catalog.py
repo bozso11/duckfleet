@@ -46,7 +46,7 @@ CREATE TABLE scan_runs (
 );
 CREATE TABLE databases (
     rel_path VARCHAR PRIMARY KEY, file_name VARCHAR, abs_path VARCHAR,
-    size_bytes BIGINT, mtime_ns BIGINT, has_wal BOOLEAN, storage_version BIGINT,
+    size_bytes BIGINT, mtime_ns BIGINT, has_wal BOOLEAN, storage_version UBIGINT,
     status VARCHAR, error_type VARCHAR, error_message VARCHAR,
     profiled_at TIMESTAMP, profile_seconds DOUBLE,
     n_schemas INTEGER, n_tables INTEGER, n_views INTEGER, total_rows BIGINT,
@@ -204,7 +204,15 @@ def build_catalog(
         summary.config.model_dump_json(),
     ]  # fmt: skip
 
-    con = duckdb.connect(str(tmp_path))
+    con = duckdb.connect(
+        str(tmp_path),
+        config={
+            "threads": 2,
+            "memory_limit": "1GB",
+            "autoinstall_known_extensions": False,
+            "autoload_known_extensions": False,
+        },
+    )
     try:
         con.execute(SCHEMA_SQL)
         _insert(con, "scan_runs", [run_row])

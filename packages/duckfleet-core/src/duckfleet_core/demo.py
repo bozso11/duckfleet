@@ -3,8 +3,9 @@
 Used by the tests and by the acceptance checklist; never real user data.
 After a scan of the demo fleet the expected result is:
 
-* 11 candidates, 2 rejected (the SQLite look-alike and the truncated file),
-  10 ok, 1 failed (``corrupt``);
+* 16 files walked (15 databases or look-alikes and the stale WAL), 13 candidates,
+  2 rejected (the SQLite look-alike and the truncated file), 10 ok, 3 failed
+  (``corrupt`` twice: a garbage body and a garbage storage version; ``encrypted``);
 * strict families of 3 (exp_01), 3 (exp_02), 2 (exp_03) and 1 (legacy) members;
   loose families of 6, 2 and 1 members;
 * ``events`` has 3 strict variants; the empty database has no family and
@@ -135,11 +136,26 @@ def make_demo_fleet(dir: Path, seed: int = 0) -> Path:
     (broken / "corrupt.duckdb").write_bytes(
         real_head + bytes(4096 - 12) + bytes(rng.getrandbits(8) for _ in range(8192))
     )
+    # Valid magic followed by a storage version with the high bit set (R-01): the header read
+    # reports no version, the profile is ``corrupt``.
+    (broken / "highbit.duckdb").write_bytes(bytes(8) + b"DUCK" + b"\xff" * 8 + bytes(4096))
     # Truncated file: 100 random bytes without the magic, rejected by the sniff.
     garbage = bytes(rng.getrandbits(8) for _ in range(100))
     while garbage[8:12] == b"DUCK":  # pragma: no cover - vanishingly unlikely
         garbage = bytes(rng.getrandbits(8) for _ in range(100))
     (broken / "truncated.duckdb").write_bytes(garbage)
+
+    # Encrypted database (R-11): the header keeps the magic, opening it without a key fails.
+    encrypted = root / "secure" / "encrypted.duckdb"
+    _remove_db(encrypted)
+    encrypted.parent.mkdir(parents=True, exist_ok=True)
+    con = duckdb.connect()
+    try:
+        con.execute(f"ATTACH '{encrypted.as_posix()}' AS enc (ENCRYPTION_KEY 'demo-fleet-key')")
+        con.execute("CREATE TABLE enc.secret AS SELECT 1 AS i")
+        con.execute("DETACH enc")  # checkpoints; no .wal sibling stays behind
+    finally:
+        con.close()
 
     # Stale WAL sibling next to the first run (health flag ``wal_present``).
     (root / "exp_01" / "run_01" / "metrics.duckdb.wal").write_bytes(b"")

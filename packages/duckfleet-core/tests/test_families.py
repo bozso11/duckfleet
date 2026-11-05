@@ -220,7 +220,7 @@ def runs(experiment: str, count: int) -> frozenset[str]:
 
 def test_demo_fleet_families(demo_profiles: list[DatabaseProfile]) -> None:
     ok = [p for p in demo_profiles if p.status == "ok"]
-    assert len(demo_profiles) == 11 and len(ok) == 10
+    assert len(demo_profiles) == 13 and len(ok) == 10
 
     strict = family_groups(demo_profiles, strict=True)
     assert [len(g.members) for g in strict] == [3, 3, 2, 1]

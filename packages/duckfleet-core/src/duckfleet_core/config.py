@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 
 import platformdirs
@@ -51,11 +52,29 @@ class ScanConfig(BaseModel):
             out.append(ext if ext.startswith(".") else "." + ext)
         return out
 
+    @field_validator("tag_patterns")
+    @classmethod
+    def _check_tag_patterns(cls, value: list[str]) -> list[str]:
+        """Every pattern must compile and carry the named groups ``key`` and ``value`` (R-03)."""
+        for pattern in value:
+            try:
+                compiled = re.compile(pattern)
+            except re.error as exc:
+                raise ValueError(f"invalid tag pattern {pattern!r}: {exc}") from None
+            if not {"key", "value"} <= set(compiled.groupindex):
+                raise ValueError(
+                    f"invalid tag pattern {pattern!r}: it needs the named groups "
+                    "(?P<key>...) and (?P<value>...)"
+                )
+        return value
+
     def resolved_workers(self) -> int:
-        """``workers``, or ``max(1, cpu_count - 2)`` when unset (decision D-005)."""
-        if self.workers is not None:
-            return max(1, self.workers)
-        return max(1, (os.cpu_count() or 1) - 2)
+        """``workers``, or ``max(1, cpu_count - 2)`` when unset, at most ``MAX_POOL_WORKERS``.
+
+        Decision D-005; the cap (R-04) keeps the summary, the pool and the UI input in agreement.
+        """
+        wanted = self.workers if self.workers is not None else (os.cpu_count() or 1) - 2
+        return min(max(1, wanted), MAX_POOL_WORKERS)
 
     def resolved_memory_limit_mb(self) -> int:
         """Memory limit per worker in MB.

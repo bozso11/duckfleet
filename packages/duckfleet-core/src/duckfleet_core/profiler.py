@@ -71,7 +71,7 @@ _MISSING = ("database does not exist", "no such file")
 _NOT_DUCKDB = ("not a valid duckdb database file",)
 _CORRUPT = ("corrupt", "checksum", "reached the end of the file")
 _INCOMPATIBLE = ("version number",)  # TBC: not reproduced
-_ENCRYPTED = ("encrypt",)  # TBC: needs an encrypted fixture
+_ENCRYPTED = ("encrypt",)  # "Cannot open encrypted database ... without a key" (R-11, tested)
 
 _MESSAGE_LIMIT = 500
 
@@ -131,16 +131,17 @@ def classify_error(exc: BaseException) -> ProfileError:
 def profile_database(abs_path: str, rel_path: str, config_dict: dict) -> dict:
     """Profile one file and return ``DatabaseProfile.model_dump(mode="json")``. Never raises."""
     started = time.perf_counter()
-    try:
-        config = ScanConfig.model_validate(config_dict)
-    except Exception:  # a bad config must not kill the worker
-        config = ScanConfig()
     path = Path(abs_path)
-    facts = _file_facts(path, rel_path, config)
+    config: ScanConfig | None = None
+    facts: dict[str, Any] | None = None
     try:
+        # A config that does not validate (for example an invalid tag pattern, R-03) is an
+        # error on this file, not an exception in the worker.
+        config = ScanConfig.model_validate(config_dict)
+        facts = _file_facts(path, rel_path, config)
         profile = _profile(path, config, facts, started)
     except Exception as exc:
-        profile = _error_profile(facts, exc, started)
+        profile = _error_profile(facts or _file_facts(path, rel_path, config), exc, started)
     return profile.model_dump(mode="json")
 
 
@@ -167,8 +168,8 @@ def error_profile(
 # ---------------------------------------------------------------- internals
 
 
-def _file_facts(path: Path, rel_path: str, config: ScanConfig) -> dict[str, Any]:
-    """Facts known without opening the database. Never raises."""
+def _file_facts(path: Path, rel_path: str, config: ScanConfig | None) -> dict[str, Any]:
+    """Facts known without opening the database. Never raises (tags fall back to ``{}``)."""
     try:
         stat = path.stat()
         size_bytes, mtime_ns = stat.st_size, stat.st_mtime_ns
@@ -178,6 +179,10 @@ def _file_facts(path: Path, rel_path: str, config: ScanConfig) -> dict[str, Any]
         has_wal = has_wal_sibling(path)
     except OSError:
         has_wal = False
+    try:
+        tags = extract_tags(rel_path, config.tag_patterns) if config is not None else {}
+    except Exception:  # e.g. re.error from a pattern that was never validated
+        tags = {}
     return {
         "rel_path": rel_path,
         "abs_path": str(path),
@@ -187,7 +192,7 @@ def _file_facts(path: Path, rel_path: str, config: ScanConfig) -> dict[str, Any]
         "has_wal": has_wal,
         "storage_version": None,
         "duckdb_version": duckdb.__version__,
-        "tags": extract_tags(rel_path, config.tag_patterns),
+        "tags": tags,
     }
 
 
@@ -211,13 +216,23 @@ def _error_profile(facts: dict[str, Any], exc: BaseException, started: float) ->
 
 
 def _as_datetime(value: Any) -> datetime | None:
-    """Datetime for comparison: dates become midnight, aware values naive UTC."""
+    """Datetime for comparison: dates become midnight, aware values naive UTC.
+
+    The sentinels DuckDB's ``infinity`` and ``-infinity`` come back as
+    (``datetime.max``, ``datetime.min``, ``date.max``, ``date.min``) are not
+    times and return ``None`` (R-02, second guard behind the ``isfinite`` filter).
+    """
     if isinstance(value, datetime):
         if value.tzinfo is not None:
             # TUNING(timezones)
-            value = value.astimezone(UTC).replace(tzinfo=None)
-        return value
+            try:
+                value = value.astimezone(UTC).replace(tzinfo=None)
+            except OverflowError:
+                return None
+        return None if value in (datetime.min, datetime.max) else value
     if isinstance(value, date):
+        if value in (date.min, date.max):
+            return None
         return datetime(value.year, value.month, value.day)
     return None
 
@@ -363,7 +378,12 @@ def _run_aggregates(
             if kind == "count":
                 expressions.append(f"count({quoted})")
             elif kind in ("min", "max"):
-                expressions.append(f"{kind}({_value_expr(column)})")
+                expr = _value_expr(column)
+                if column.is_temporal:
+                    # TUNING(time-window-scope): 'infinity' sentinels never open a window (R-02).
+                    expressions.append(f"{kind}({expr}) FILTER (WHERE isfinite({expr}))")
+                else:
+                    expressions.append(f"{kind}({expr})")
             else:
                 expressions.append(f"approx_count_distinct({quoted})")
             keys.append((index, kind))
@@ -391,7 +411,7 @@ def _profile_table(
             row = con.execute(f"SELECT count(*) FROM {qualified}").fetchone()
             row_count = int(row[0]) if row else None
         if item.kind == "table" and columns:
-            stats, t_min, t_max = _table_stats(con, qualified, columns, row_count, config)
+            stats, t_min, t_max, error = _table_stats(con, qualified, columns, row_count, config)
     except Exception as exc:
         error = f"{type(exc).__name__}: {str(exc)[:_MESSAGE_LIMIT]}"
         logger.debug("table error in %s: %s", qualified, error)
@@ -422,7 +442,8 @@ def _table_stats(
     columns: list[ColumnInfo],
     row_count: int | None,
     config: ScanConfig,
-) -> tuple[dict[int, ColumnStats], datetime | None, datetime | None]:
+) -> tuple[dict[int, ColumnStats], datetime | None, datetime | None, str | None]:
+    """Column stats, the table's time window and an error text when the window is unusable."""
     # TUNING(stats-threshold)
     sampled = row_count is not None and row_count > config.stats_row_threshold
 
@@ -463,6 +484,7 @@ def _table_stats(
     stats: dict[int, ColumnStats] = {}
     mins: list[datetime] = []
     maxs: list[datetime] = []
+    out_of_range: list[str] = []
     for index, column in enumerate(columns):
         low = values.get((index, "min"))
         high = values.get((index, "max"))
@@ -476,13 +498,22 @@ def _table_stats(
             sampled=sampled,
         )
         if column.is_temporal:
+            if any(raw is not None and not isinstance(raw, date) for raw in (low, high)):
+                # Python cannot represent the value (for example year 10000): DuckDB hands it
+                # back as a string. The window would be silently wrong, so it is dropped (R-05).
+                out_of_range.append(column.name)
+                continue
             low_dt, high_dt = _as_datetime(low), _as_datetime(high)
             if low_dt is not None:
                 mins.append(low_dt)
             if high_dt is not None:
                 maxs.append(high_dt)
+    if out_of_range:
+        noun = "column" if len(out_of_range) == 1 else "columns"
+        message = f"temporal value outside the supported range in {noun} {', '.join(out_of_range)}"
+        return stats, None, None, message
     # TUNING(time-window-scope): all temporal columns of all tables contribute.
-    return stats, (min(mins) if mins else None), (max(maxs) if maxs else None)
+    return stats, (min(mins) if mins else None), (max(maxs) if maxs else None), None
 
 
 def _assemble(

@@ -1,7 +1,7 @@
 # Architecture
 
-Last updated: 2026-11-04 (v0.1 implemented). Section 5 holds the final
-catalog schema, copied from `duckfleet_core/catalog.py` (`SCHEMA_SQL`).
+Last updated: 2026-11-05 (0.1.1). Section 5 holds the final catalog schema,
+copied from `duckfleet_core/catalog.py` (`SCHEMA_SQL`).
 
 ## 1. Two packages, one boundary
 
@@ -19,9 +19,10 @@ the CLI, notebooks and tests.
 ## 2. Components (core)
 
 1. **discovery**: walks the root, filters by extension, checks the DuckDB
-   header magic, records size, mtime, WAL sibling, storage version. A file a
-   writer holds open (unreadable on Windows) stays a candidate and is
-   reported `locked` by the profiler.
+   header magic, records size, mtime, WAL sibling, storage version (none when
+   the header value is above 2^63 - 1). The cache directory is pruned from the
+   walk. A file a writer holds open (unreadable on Windows) stays a candidate
+   and is reported `locked` by the profiler.
 2. **profiler**: worker entry point; opens one file read-only with capped
    threads and memory, lists schemas, tables, views, columns, counts rows,
    computes cheap column stats and time windows, classifies errors. Never
@@ -53,13 +54,17 @@ root folder
    |  discovery (extension + header magic)
    v
 candidates (largest first)  --reuse check against cached profiles-->  to_profile
-   |  ProcessPoolExecutor(spawn), N = cpu_count - 2 workers, each: read_only, threads=1, memory cap
+   |  ProcessPoolExecutor(spawn), N = min(max(1, cpu_count - 2), 61) workers, each: read_only, threads=1, memory cap
    v
 DatabaseProfile JSON per file   <cache>/roots/<root_key>/profiles/*.json   (source of truth)
    |  build_catalog: all profiles -> catalog.duckdb.tmp -> os.replace
    v
 catalog.duckdb (derived index)  --CatalogReader (read-only per request)-->  CLI report / Streamlit UI
 ```
+
+The reuse check compares size, mtime, WAL presence, profile schema version
+and DuckDB version. The pool is capped at 61 workers (`MAX_POOL_WORKERS`, the
+limit of `ProcessPoolExecutor` on Windows), also for an explicit `--workers`.
 
 The UI runs the scan as a subprocess (`python -m duckfleet_core scan
 --progress json`) and reads progress events from its stdout. The process
@@ -68,12 +73,14 @@ pool therefore never lives inside the Streamlit server process.
 ## 4. Storage locations
 
 ```
-<user cache dir>/duckfleet/           platformdirs.user_cache_dir("duckfleet")
+<user cache dir>                      platformdirs.user_cache_dir("duckfleet", appauthor=False)
+                                      (D-015; Windows %LOCALAPPDATA%\duckfleet\Cache, Linux ~/.cache/duckfleet)
   recent_roots.json
   roots/<root_key>/
     root.txt
     profiles/<file_key>.json
     catalog.duckdb
+    catalog.duckdb.tmp                build target, replaced atomically, gone after a scan
     last_scan.json
 ```
 
@@ -94,7 +101,7 @@ CREATE TABLE scan_runs (
 );
 CREATE TABLE databases (
     rel_path VARCHAR PRIMARY KEY, file_name VARCHAR, abs_path VARCHAR,
-    size_bytes BIGINT, mtime_ns BIGINT, has_wal BOOLEAN, storage_version BIGINT,
+    size_bytes BIGINT, mtime_ns BIGINT, has_wal BOOLEAN, storage_version UBIGINT,
     status VARCHAR, error_type VARCHAR, error_message VARCHAR,
     profiled_at TIMESTAMP, profile_seconds DOUBLE,
     n_schemas INTEGER, n_tables INTEGER, n_views INTEGER, total_rows BIGINT,
@@ -160,8 +167,9 @@ Rules:
 ```
 launch.py         console script duckfleet-ui -> streamlit run app.py
 app.py            st.set_page_config, st.navigation([Overview])
-views/overview.py render(): sidebar (root, options, Scan), metrics, fleet table,
-                  families + matrix, table variants, diff, timeline, health, rejected
+views/overview.py render(): sidebar (recent-roots selectbox, root folder, workers, max files,
+                  full rescan, sniff all, Scan and Load existing catalog buttons), metrics,
+                  fleet table, families + matrix, table variants, diff, timeline, health, rejected
 scan_runner.py    subprocess (python -m duckfleet_core scan --progress json) + JSON-lines
 catalog_access.py st.cache_data wrappers keyed by catalog path + mtime, DataFrames
 ```

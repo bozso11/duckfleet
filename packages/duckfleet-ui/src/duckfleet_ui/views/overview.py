@@ -143,9 +143,18 @@ def _scan(root: str, options: ScanOptions) -> None:
             status.update(label="Scan failed", state="error", expanded=True)
 
     if not result.ok:
-        st.error(result.fatal or f"The scan ended with exit code {result.returncode}.")
+        if result.fatal:
+            message = result.fatal
+        elif result.returncode == 0:
+            message = "The scan ended without a finished event."
+        else:
+            message = f"The scan ended with exit code {result.returncode}."
+        st.error(message)
         with st.expander("Scan log (stderr)", expanded=True):
             st.code(result.stderr or "(empty)", language="text")
+            if result.stray_stdout:
+                st.markdown("**Unexpected output on stdout**")
+                st.code("\n".join(result.stray_stdout), language="text")
         return
 
     summary = result.summary or {}
@@ -328,25 +337,53 @@ def _diff(path: str, mtime: int, dbs: pd.DataFrame) -> None:
     col3.dataframe(columns, hide_index=True, width="stretch")
 
 
+def _plot_windows(timeline: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
+    """Frame for ``px.timeline`` plus the databases whose window is a single instant.
+
+    A bar with ``time_max == time_min`` has no width and would not show (R-08), so it is
+    drawn with the larger of 1 hour and 0.5 % of the fleet span; the hover text says so.
+    """
+    frame = timeline.copy()
+    fmt = "%Y-%m-%d %H:%M:%S"
+    frame["window"] = (
+        frame["time_min"].dt.strftime(fmt) + " to " + frame["time_max"].dt.strftime(fmt)
+    )
+    single = frame["time_max"] == frame["time_min"]
+    if single.any():
+        span = frame["time_max"].max() - frame["time_min"].min()
+        minimum = max(pd.Timedelta(hours=1), span * 0.005)
+        frame.loc[single, "window"] = "single instant " + frame.loc[single, "time_min"].dt.strftime(
+            fmt
+        )
+        frame.loc[single, "time_max"] = frame.loc[single, "time_min"] + minimum
+    return frame, frame.loc[single, "rel_path"].tolist()
+
+
 def _timeline(path: str, mtime: int, dbs: pd.DataFrame) -> None:
     st.subheader("Time windows")
     timeline = access.timeline(path, mtime)
     if timeline.empty:
         st.info("No database has temporal data.")
     else:
-        order = sorted(timeline["family_strict"].unique(), key=lambda f: (f == "(none)", len(f), f))
+        plot, instants = _plot_windows(timeline)
+        order = sorted(plot["family_strict"].unique(), key=lambda f: (f == "(none)", len(f), f))
         figure = px.timeline(
-            timeline,
+            plot,
             x_start="time_min",
             x_end="time_max",
             y="rel_path",
             color="family_strict",
             category_orders={"family_strict": order},
             labels={"family_strict": "strict family", "rel_path": "database"},
+            hover_data={"window": True, "time_min": False, "time_max": False},
         )
         figure.update_yaxes(autorange="reversed", title=None)
-        figure.update_layout(height=max(320, 26 * len(timeline) + 140), margin={"l": 0, "r": 0})
+        figure.update_layout(height=max(320, 26 * len(plot) + 140), margin={"l": 0, "r": 0})
         st.plotly_chart(figure, width="stretch")
+        if instants:
+            st.caption(
+                "Single-instant windows are drawn with a minimum width: " + ", ".join(instants)
+            )
     without = dbs.loc[dbs["time_min"].isna(), ["rel_path", "status", "error_type", "health"]]
     if not without.empty:
         st.markdown(f"**Databases without a time window ({len(without)})**")

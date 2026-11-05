@@ -14,6 +14,8 @@ import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
 
+from pydantic import ValidationError
+
 from duckfleet_core import __version__
 from duckfleet_core.catalog import CatalogReader
 from duckfleet_core.config import ScanConfig
@@ -58,6 +60,12 @@ def _build_parser() -> argparse.ArgumentParser:
     scan.add_argument("--cache-dir", help="cache directory (default: the user cache)")
     scan.add_argument("--extensions", help="comma separated, default .duckdb,.db,.ddb")
     scan.add_argument("--sniff-all", action="store_true", help="header-check every file")
+    scan.add_argument(
+        "--tag-pattern",
+        action="append",
+        metavar="REGEX",
+        help="tag regex with the named groups key and value; repeatable, replaces the defaults",
+    )
     scan.add_argument("--progress", choices=["text", "json", "none"], default="text")
 
     report = sub.add_parser("report", help="text summary of the last scan of ROOT")
@@ -125,6 +133,8 @@ def _config_from_args(args: argparse.Namespace) -> ScanConfig:
         options["cache_dir"] = args.cache_dir
     if args.extensions:
         options["extensions"] = args.extensions.split(",")
+    if args.tag_pattern:
+        options["tag_patterns"] = list(args.tag_pattern)
     return ScanConfig(**options)
 
 
@@ -135,8 +145,19 @@ def _fatal(message: str, progress: str = "text") -> int:
     return EXIT_FATAL
 
 
+def _usage_error(message: str, progress: str = "text") -> int:
+    print(f"duckfleet: error: {message}", file=sys.stderr, flush=True)
+    if progress == "json":
+        print(json.dumps({"event": "fatal", "message": message}), flush=True)
+    return EXIT_USAGE
+
+
 def _cmd_scan(args: argparse.Namespace) -> int:
-    config = _config_from_args(args)
+    try:
+        config = _config_from_args(args)
+    except ValidationError as exc:  # an option that does not validate, e.g. a bad tag pattern
+        text = "; ".join(str(e["msg"]).removeprefix("Value error, ") for e in exc.errors())
+        return _usage_error(text, args.progress)
     try:
         summary = run_scan(Path(args.root), config, _progress_handler(args.progress))
     except Exception as exc:

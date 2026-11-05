@@ -2,11 +2,92 @@
 
 ## Unreleased
 
-1. `docs/REVIEW_v0.1.md`: review of 0.1.0 against the plan (accepted; 10
-   confirmed defects, none on the demo fleet's main path, to ship as 0.1.1).
-2. `docs/PLAN_v0.2.md`: detailed plan for 0.1.1 (Phase 0) and v0.2
-   (Database page, SQL page, CLI `sql`, `summarize`, `preview`).
-3. Decisions D-019 to D-024; limits L-09 revised, L-14 to L-17 added.
+Nothing yet.
+
+## 0.1.1 (2026-11-05)
+
+The fixes of `docs/REVIEW_v0.1.md` (Phase 0 of `docs/PLAN_v0.2.md`); no new
+features. Review IDs in brackets.
+
+### Fixed
+
+1. [R-01] A file with the DuckDB magic followed by garbage (a storage version
+   above 2^63 - 1) made the catalog build fail, and every later scan of that
+   root failed the same way. `databases.storage_version` is now `UBIGINT` and
+   `read_header` reports no version for such a value. New demo file
+   `broken/highbit.duckdb`, profiled as `corrupt`.
+2. [R-02] `infinity` and `-infinity` in TIMESTAMP, DATE and TIMESTAMPTZ
+   columns no longer open a time window of year 1 to year 9999: the temporal
+   `min`/`max` skip non-finite values (exact and sampled query), and
+   `_as_datetime` returns `None` for `datetime.min/max` and `date.min/max`.
+3. [R-03] An invalid tag regex killed the scan. `ScanConfig.tag_patterns` is
+   validated (it must compile and have the named groups `key` and `value`);
+   `profile_database` turns an invalid config into an error profile and falls
+   back to no tags when tag extraction itself fails. New CLI option
+   `scan --tag-pattern REGEX` (repeatable, replaces the defaults); an invalid
+   pattern exits 1 with a message naming it.
+4. [R-04] On a machine with 64 or more CPUs the default worker count exceeded
+   the UI input's maximum (61) and the page raised. `resolved_workers()` is
+   capped at `MAX_POOL_WORKERS`.
+5. [R-05] A temporal value outside Python's datetime range (for example year
+   10000) silently dropped out of the time window. The table now carries the
+   error `temporal value outside the supported range in column <name>`, its
+   window is cleared, and the database gets `table_error:<schema>.<table>`.
+6. [R-06] The cache directory is no longer walked, so a `--cache-dir` inside
+   the root does not turn the catalog into a fleet member.
+7. [R-07] The catalog writer connects with the standard settings (2 threads,
+   1 GB, extension autoload off).
+8. [R-08] The Overview timeline draws a single-instant window with a minimum
+   width (the larger of 1 hour and 0.5 % of the fleet span), the hover text
+   says "single instant", and the caption lists those databases.
+9. [R-09] A scan subprocess that exits 0 without a `finished` event is
+   reported as such, and stray stdout lines appear in the log expander.
+10. [R-10] Removed the vacuous assertion in `test_catalog.py`.
+11. [P-01] Cached profiles are reused only when `duckdb_version` matches the
+    installed DuckDB (one full re-profile after an upgrade).
+12. [P-02] The process pool is shut down with `cancel_futures=True` in a
+    `try/finally`, and `run_scan` closes the profile stream, so an error in
+    the consumer or Ctrl-C does not profile every queued file first.
+
+### Documentation corrections
+
+1. [R-11] An `encrypted` fixture is producible: the demo fleet has
+   `secure/encrypted.duckdb` and a test asserts `error.type == "encrypted"`.
+   D-018, F-SCAN-09 and the 0.1.0 open item 1 are corrected.
+2. [R-12] `docs/LIMITS.md` L-02 and `docs/ARCHITECTURE.md` Section 3 state the
+   cap of 61 workers.
+3. [R-13] The plan's Phase 4 test text (a second run reuses every profile)
+   cannot hold for the demo fleet because failed files are retried; the test
+   asserts 10 reused and the failed files re-profiled, with no timing (noted
+   under 0.1.0 deviations).
+4. [R-14] `docs/ARCHITECTURE.md` Section 4: cache path wording (D-015) and
+   `catalog.duckdb.tmp`.
+5. [R-15] F-SCAN-10: reuse also compares the profile schema version (and,
+   since P-01, the DuckDB version).
+6. [R-16] `docs/ARCHITECTURE.md` Section 7: the sidebar description; the UI
+   package description no longer lists pages that do not exist yet.
+7. [P-03], [P-04] `docs/LIMITS.md` 15 (profiles with table errors are reused
+   until the file changes) and 5 (a click during a scan).
+8. `docs/REVIEW_v0.1.md`, `docs/PLAN_v0.2.md`, decisions D-019 to D-024, limits
+   L-09 revised and L-14 to L-17 added (written before the fixes).
+
+### Demo fleet
+
+The demo fleet now has 16 files walked, 13 candidates, 2 rejected, 10 ok and
+3 failed (`corrupt` twice, `encrypted`); families unchanged. Two files were
+added (`broken/highbit.duckdb`, `secure/encrypted.duckdb`; the latter leaves
+no `.wal` sibling). Every test and document that stated the old numbers (14,
+11, 1 failed) is updated.
+
+### Deviations from the plan
+
+1. The CLI option `--tag-pattern` is new: the acceptance item "an invalid tag
+   pattern exits 1" needs a way to pass a pattern from the command line
+   (D-025).
+2. A config dict that does not validate used to fall back to the defaults in
+   `profile_database`; it now gives an error profile (D-025).
+3. When several columns of a table hold unrepresentable temporal values the
+   error text names all of them (`... in columns a, b`).
 
 ## 0.1.0 (2026-11-04)
 
@@ -84,11 +165,16 @@ Also checked: the UI tests pass with pandas 2.2.3 as well as 3.1.1.
    (D-015); `streamlit>=1.50` (the page uses `width="stretch"`).
 8. The profiler never opens a file whose header lacks the DuckDB magic, also
    when called directly.
+9. The plan's Phase 4 test text (a second run reuses every profile) cannot
+   hold for the demo fleet because the corrupt file is retried; the test
+   asserts 10 of 11 reused and no timing (R-13).
 
 ### Open after 0.1.0
 
 1. `incompatible_version` and `encrypted` are classified by message only; no
-   fixture exists (plan Section 10 item 2).
+   fixture exists (plan Section 10 item 2). *Corrected in 0.1.1:* an
+   `encrypted` fixture is producible and part of the demo fleet (R-11);
+   `incompatible_version` stays unverified.
 2. `st.navigation` is not exercised by AppTest; the page function is.
 3. Numbers marked (TBC) in `docs/LIMITS.md` and the tuning points in
    `docs/TUNING.md` are untested on a real fleet.

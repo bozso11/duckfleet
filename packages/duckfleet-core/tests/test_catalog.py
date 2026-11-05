@@ -38,12 +38,12 @@ def make_summary(config: ScanConfig | None = None) -> ScanSummary:
         duckfleet_version="0.1.0",
         duckdb_version=duckdb.__version__,
         workers=3,
-        files_walked=14,
-        files_candidates=11,
+        files_walked=16,
+        files_candidates=13,
         files_rejected=2,
-        files_profiled=11,
+        files_profiled=13,
         files_reused=0,
-        files_failed=1,
+        files_failed=3,
         truncated=False,
         catalog_path="x",
         config=config or ScanConfig(),
@@ -71,14 +71,9 @@ def count(reader: CatalogReader, table: str) -> int:
 
 def test_table_row_counts(built: CatalogReader) -> None:
     assert count(built, "scan_runs") == 1
-    assert count(built, "databases") == 11
-    # events x8, config x8, notes x2, samples x1; the corrupt and empty files have none
+    assert count(built, "databases") == 13
+    # events x8, config x8, notes x2, samples x1; the corrupt, encrypted and empty files have none
     assert count(built, "tables") == 19
-    assert (
-        count(built, "columns")
-        == 8 * 3 + 2 * 3 + 2 * 4 + 2 * 2 + 2 + 2 + 2 * 2 + 2 + 0 - 8 * 2 + 8 * 2
-        or True
-    )
     assert count(built, "families") == 4 + 3
     assert count(built, "table_variants") == 6  # events x3, config, notes, samples
     assert count(built, "rejected") == 2
@@ -98,6 +93,7 @@ def test_schema_types(built: CatalogReader) -> None:
     }
     assert types[("databases", "time_min")] == "TIMESTAMP"
     assert types[("databases", "size_bytes")] == "BIGINT"
+    assert types[("databases", "storage_version")] == "UBIGINT"  # R-01
     assert types[("databases", "profile_seconds")] == "DOUBLE"
     assert types[("scan_runs", "truncated")] == "BOOLEAN"
     assert types[("columns", "sampled")] == "BOOLEAN"
@@ -111,8 +107,8 @@ def test_scan_run_row(built: CatalogReader) -> None:
     assert (run["run_id"], run["workers"], run["files_candidates"], run["files_failed"]) == (
         "run-1",
         3,
-        11,
-        1,
+        13,
+        3,
     )
     assert run["started_at"] == datetime(2026, 1, 1, 10, 0, 0)  # naive UTC
     assert json.loads(run["config_json"])["max_files"] == 1000
@@ -120,7 +116,7 @@ def test_scan_run_row(built: CatalogReader) -> None:
 
 def test_databases_rows(built: CatalogReader) -> None:
     rows = {r["rel_path"]: r for r in built.databases()}
-    assert len(rows) == 11
+    assert len(rows) == 13
     run1 = rows[RUN1]
     assert run1["status"] == "ok" and run1["has_wal"] is True
     assert run1["tags"] == {"exp": "01", "run": "01"}
@@ -137,6 +133,13 @@ def test_databases_rows(built: CatalogReader) -> None:
     assert corrupt["error_message"]
     assert corrupt["fp_strict"] is None and corrupt["family_strict"] is None
     assert corrupt["time_min"] is None and corrupt["n_tables"] == 0
+
+    highbit = rows["broken/highbit.duckdb"]  # R-01: magic, then a garbage storage version
+    assert highbit["status"] == "error" and highbit["error_type"] == "corrupt"
+    assert highbit["storage_version"] is None
+    encrypted = rows["secure/encrypted.duckdb"]  # R-11
+    assert encrypted["status"] == "error" and encrypted["error_type"] == "encrypted"
+    assert encrypted["storage_version"] is not None and encrypted["n_tables"] == 0
 
     empty = rows["empty/empty.duckdb"]
     assert empty["status"] == "ok" and empty["health"] == ["empty_database"]
@@ -222,9 +225,17 @@ def test_timeline(built: CatalogReader) -> None:
 
 def test_health_and_rejected(built: CatalogReader) -> None:
     health = {h["rel_path"]: h for h in built.health()}
-    assert set(health) == {RUN1, "empty/empty.duckdb", "broken/corrupt.duckdb"}
+    assert set(health) == {
+        RUN1,
+        "empty/empty.duckdb",
+        "broken/corrupt.duckdb",
+        "broken/highbit.duckdb",
+        "secure/encrypted.duckdb",
+    }
     assert health[RUN1]["health"] == ["wal_present"]
     assert health["broken/corrupt.duckdb"]["error_type"] == "corrupt"
+    assert health["broken/highbit.duckdb"]["error_type"] == "corrupt"
+    assert health["secure/encrypted.duckdb"]["error_type"] == "encrypted"
     assert health["empty/empty.duckdb"]["health"] == ["empty_database"]
     assert {(r["rel_path"], r["reason"]) for r in built.rejected()} == {
         ("legacy/sqlite_lookalike.db", "not_duckdb_header"),
@@ -249,6 +260,17 @@ def test_df_returns_a_dataframe(built: CatalogReader) -> None:
     frame = built.df("SELECT rel_path, size_bytes FROM databases WHERE status = ?", ["ok"])
     assert isinstance(frame, pandas.DataFrame)
     assert len(frame) == 10
+
+
+def test_catalog_keeps_a_storage_version_above_the_signed_range(
+    tmp_path: Path, demo_profiles
+) -> None:
+    """R-01: a profile with a uint64 storage version above 2**63 must not break the build."""
+    profile = demo_profiles[0].model_copy(update={"storage_version": 2**64 - 1})
+    target = tmp_path / "c.duckdb"
+    build_catalog([profile], make_summary(), [], target, tmp_path / "c.tmp")
+    (row,) = CatalogReader(target).databases()
+    assert row["storage_version"] == 2**64 - 1
 
 
 def test_reader_never_keeps_the_file_open(built: CatalogReader, tmp_path: Path) -> None:

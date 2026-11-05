@@ -44,6 +44,13 @@ def test_read_header_storage_version_little_endian(tmp_path: Path) -> None:
     assert read_header(path) == (True, 0x0102)
 
 
+def test_read_header_ignores_a_garbage_storage_version(tmp_path: Path) -> None:
+    """R-01: a version above 2**63 - 1 is no version (the catalog column used to overflow)."""
+    assert read_header(fake_duckdb(tmp_path / "a.duckdb", version=2**63 - 1)) == (True, 2**63 - 1)
+    assert read_header(fake_duckdb(tmp_path / "b.duckdb", version=2**63)) == (True, None)
+    assert read_header(fake_duckdb(tmp_path / "c.duckdb", version=2**64 - 1)) == (True, None)
+
+
 def test_read_header_missing_file_raises(tmp_path: Path) -> None:
     with pytest.raises(OSError):
         read_header(tmp_path / "nope.duckdb")
@@ -51,9 +58,9 @@ def test_read_header_missing_file_raises(tmp_path: Path) -> None:
 
 def test_demo_fleet_discovery(demo_fleet: Path) -> None:
     result = discover(demo_fleet, ScanConfig())
-    assert len(result.candidates) == 11
+    assert len(result.candidates) == 13
     assert not result.truncated
-    assert result.walked_files == 14  # 11 candidates + 2 rejected + 1 wal
+    assert result.walked_files == 16  # 13 candidates + 2 rejected + 1 wal
     assert {(r.rel_path, r.reason) for r in result.rejected} == {
         ("legacy/sqlite_lookalike.db", "not_duckdb_header"),
         ("broken/truncated.duckdb", "not_duckdb_header"),
@@ -62,9 +69,31 @@ def test_demo_fleet_discovery(demo_fleet: Path) -> None:
     assert by_rel["exp_01/run_01/metrics.duckdb"].has_wal
     assert not by_rel["exp_01/run_02/metrics.duckdb"].has_wal
     assert by_rel["broken/corrupt.duckdb"].size_bytes == 4096 + 8192
+    assert by_rel["broken/highbit.duckdb"].storage_version is None  # R-01
+    encrypted = by_rel["secure/encrypted.duckdb"]
+    assert isinstance(encrypted.storage_version, int) and encrypted.storage_version > 0
+    assert not encrypted.has_wal  # the generator leaves no .wal behind
     assert all("\\" not in c.rel_path for c in result.candidates)
     assert all(c.abs_path.is_absolute() for c in result.candidates)
     assert all(c.mtime_ns > 0 for c in result.candidates)
+
+
+def test_the_cache_directory_inside_the_root_is_pruned(tmp_path: Path) -> None:
+    """R-06, also through a differently spelled path to the same folder."""
+    root = tmp_path / "root"
+    fake_duckdb(root / "a.duckdb")
+    cache = root / "cache" / "roots" / "x"
+    fake_duckdb(cache / "catalog.duckdb")
+    plain = discover(root, ScanConfig())
+    assert rels(plain.candidates) == ["a.duckdb", "cache/roots/x/catalog.duckdb"]
+    pruned = discover(root, ScanConfig(cache_dir=str(root / "cache")))
+    assert rels(pruned.candidates) == ["a.duckdb"]
+    roundabout = str(root / "other" / ".." / "CACHE" if os.name == "nt" else root / "cache")
+    (root / "other").mkdir()
+    pruned = discover(root, ScanConfig(cache_dir=roundabout))
+    assert rels(pruned.candidates) == ["a.duckdb"]
+    elsewhere = discover(root, ScanConfig(cache_dir=str(tmp_path / "elsewhere")))
+    assert len(elsewhere.candidates) == 2  # a cache outside the root changes nothing
 
 
 def test_candidates_sorted_largest_first_with_stable_tiebreak(demo_fleet: Path) -> None:

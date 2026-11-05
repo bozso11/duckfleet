@@ -6,7 +6,7 @@ from pathlib import Path
 import platformdirs
 import pytest
 
-from duckfleet_core.config import ScanConfig, default_cache_dir
+from duckfleet_core.config import MAX_POOL_WORKERS, ScanConfig, default_cache_dir
 
 
 def test_defaults_match_the_plan() -> None:
@@ -28,6 +28,28 @@ def test_workers_default_is_cpu_count_minus_two(monkeypatch: pytest.MonkeyPatch)
     monkeypatch.setattr(os, "cpu_count", lambda: None)
     assert ScanConfig().resolved_workers() == 1
     assert ScanConfig(workers=3).resolved_workers() == 3
+
+
+def test_workers_are_capped_at_the_pool_limit(monkeypatch: pytest.MonkeyPatch) -> None:
+    """R-04: 64+ CPUs gave a default above the Windows pool limit of 61."""
+    monkeypatch.setattr(os, "cpu_count", lambda: 72)
+    assert ScanConfig().resolved_workers() == MAX_POOL_WORKERS == 61
+    assert ScanConfig(workers=100).resolved_workers() == 61
+    assert ScanConfig(workers=61).resolved_workers() == 61
+    monkeypatch.setattr(os, "cpu_count", lambda: 63)
+    assert ScanConfig().resolved_workers() == 61
+
+
+def test_tag_patterns_are_validated() -> None:
+    """R-03: a bad pattern fails when the config is built, with the pattern in the message."""
+    assert ScanConfig(tag_patterns=[r"(?P<key>[a-z]+)_(?P<value>\d+)"]).tag_patterns
+    assert ScanConfig(tag_patterns=[]).tag_patterns == []
+    with pytest.raises(ValueError, match=r"invalid tag pattern '\('"):
+        ScanConfig(tag_patterns=["("])
+    with pytest.raises(ValueError, match="named groups"):
+        ScanConfig(tag_patterns=[r"(\w+)_(\d+)"])
+    with pytest.raises(ValueError, match="named groups"):
+        ScanConfig(tag_patterns=[r"(?P<key>\w+)"])
 
 
 def test_memory_limit_resolution(monkeypatch: pytest.MonkeyPatch) -> None:

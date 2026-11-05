@@ -30,10 +30,10 @@ def test_scan_json_prints_only_json_lines_on_stdout(
     assert code == 0
     events = [json.loads(line) for line in out.splitlines()]  # every line is JSON, nothing else
     kinds = [e["event"] for e in events]
-    assert kinds == ["discovered", "planned", *["profiled"] * 11, "catalog", "finished"]
-    assert events[0]["candidates"] == 11 and events[0]["rejected"] == 2
+    assert kinds == ["discovered", "planned", *["profiled"] * 13, "catalog", "finished"]
+    assert events[0]["candidates"] == 13 and events[0]["rejected"] == 2
     finished = events[-1]["summary"]
-    assert finished["files_failed"] == 1 and finished["workers"] == 1
+    assert finished["files_failed"] == 3 and finished["workers"] == 1
     assert finished["config"]["cache_dir"] == str(cache_dir)
     assert "{" not in err  # no events on stderr
 
@@ -43,11 +43,13 @@ def test_scan_text_progress_goes_to_stderr(
 ) -> None:
     code, out, err = run(capsys, *scan_args(demo_fleet, cache_dir))
     assert code == 0
-    assert "found 11 candidate files (14 files walked, 2 rejected)" in err
-    assert "profiling 11 files, reusing 0 cached profiles" in err
-    assert "[11/11]" in err and "error:corrupt broken/corrupt.duckdb" in err
+    assert "found 13 candidate files (16 files walked, 2 rejected)" in err
+    assert "profiling 13 files, reusing 0 cached profiles" in err
+    assert "[13/13]" in err and "error:corrupt broken/corrupt.duckdb" in err
+    assert "error:corrupt broken/highbit.duckdb" in err
+    assert "error:encrypted secure/encrypted.duckdb" in err
     assert "catalog written:" in err
-    assert "11 candidates, 2 rejected, 10 ok, 1 failed, 0 reused, 1 workers" in out
+    assert "13 candidates, 2 rejected, 10 ok, 3 failed, 0 reused, 1 workers" in out
     assert "Catalog:" in out
 
 
@@ -64,8 +66,8 @@ def test_second_scan_reuses_profiles(
     run(capsys, *scan_args(demo_fleet, cache_dir, "--progress", "none"))
     code, out, err = run(capsys, *scan_args(demo_fleet, cache_dir))
     assert code == 0
-    assert "profiling 1 files, reusing 10 cached profiles" in err
-    assert "11 candidates, 2 rejected, 10 ok, 1 failed, 10 reused" in out
+    assert "profiling 3 files, reusing 10 cached profiles" in err
+    assert "13 candidates, 2 rejected, 10 ok, 3 failed, 10 reused" in out
     code, out, _ = run(capsys, *scan_args(demo_fleet, cache_dir, "--full", "--progress", "none"))
     assert code == 0
 
@@ -83,7 +85,7 @@ def test_scan_options(
     code, _, err = run(capsys, *scan_args(demo_fleet, cache_dir, "--extensions", "db,ddb"))
     assert "found 1 candidate files" in err  # only legacy/old.db (the look-alike is rejected)
     code, _, err = run(capsys, *scan_args(demo_fleet, cache_dir, "--sniff-all"))
-    assert "found 11 candidate files" in err and "(14 files walked, 2 rejected)" in err
+    assert "found 13 candidate files" in err and "(16 files walked, 2 rejected)" in err
 
 
 def test_missing_root_is_fatal(
@@ -141,12 +143,14 @@ def test_report_text(demo_fleet: Path, cache_dir: Path, capsys: pytest.CaptureFi
         "wal_present",
         "empty_database",
         "broken/corrupt.duckdb: corrupt:",
+        "broken/highbit.duckdb: corrupt:",
+        "secure/encrypted.duckdb: encrypted:",
         "legacy/sqlite_lookalike.db: not_duckdb_header",
         "broken/truncated.duckdb: not_duckdb_header",
-        "files walked: 14",
-        "candidates: 11",
+        "files walked: 16",
+        "candidates: 13",
         "ok: 10",
-        "failed: 1",
+        "failed: 3",
     ):
         assert needle in out, needle
     windows = [line.strip() for line in out.splitlines() if " .. " in line]
@@ -154,7 +158,7 @@ def test_report_text(demo_fleet: Path, cache_dir: Path, capsys: pytest.CaptureFi
     starts = [line[:19] for line in windows]
     assert starts == sorted(starts)  # time windows in order
     assert windows[0].endswith("legacy/old.db  [F4]")
-    assert "no time window (2):" in out
+    assert "no time window (4):" in out
 
 
 def test_report_markdown(
@@ -185,7 +189,9 @@ def test_make_demo(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     assert code == 0 and "Demo fleet written" in out
     assert (target / "exp_01" / "run_01" / "metrics.duckdb").is_file()
     assert (target / "broken" / "corrupt.duckdb").is_file()
-    assert len([p for p in target.rglob("*") if p.is_file()]) == 14
+    assert (target / "broken" / "highbit.duckdb").is_file()
+    assert (target / "secure" / "encrypted.duckdb").is_file()
+    assert len([p for p in target.rglob("*") if p.is_file()]) == 16
 
 
 def test_paths(demo_fleet: Path, cache_dir: Path, capsys: pytest.CaptureFixture[str]) -> None:
@@ -224,5 +230,49 @@ def test_module_entry_point_streams_json_lines(tmp_path: Path) -> None:
     assert result.returncode == 0, result.stderr
     events = [json.loads(line) for line in result.stdout.splitlines()]
     assert events[0]["event"] == "discovered" and events[-1]["event"] == "finished"
-    assert sum(e["event"] == "profiled" for e in events) == 11
+    assert sum(e["event"] == "profiled" for e in events) == 13
     assert events[-1]["summary"]["workers"] == 2
+
+
+def test_invalid_tag_pattern_is_a_usage_error(
+    demo_fleet: Path, cache_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R-03: exit 1 and a message that names the pattern; nothing is scanned."""
+    code, out, err = run(capsys, *scan_args(demo_fleet, cache_dir, "--tag-pattern", "("))
+    assert code == 1 and out == ""
+    assert "invalid tag pattern '('" in err
+    assert not (cache_dir / "roots").exists()
+    code, _, err = run(capsys, *scan_args(demo_fleet, cache_dir, "--tag-pattern", r"(\d+)"))
+    assert code == 1 and "named groups" in err
+    code, out, _ = run(
+        capsys, *scan_args(demo_fleet, cache_dir, "--tag-pattern", "(", "--progress", "json")
+    )
+    assert code == 1 and json.loads(out.splitlines()[0])["event"] == "fatal"
+
+
+def test_valid_tag_pattern_replaces_the_defaults(
+    demo_fleet: Path, cache_dir: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    pattern = r"(?P<key>run)_(?P<value>\d+)"
+    code, _, _ = run(capsys, *scan_args(demo_fleet, cache_dir, "--tag-pattern", pattern))
+    assert code == 0
+    store = ProfileStore(cache_dir, demo_fleet)
+    profile = store.load("exp_01/run_02/metrics.duckdb")
+    assert profile is not None and profile.tags == {"run": "02"}
+
+
+def test_the_cache_directory_inside_the_root_is_not_scanned(
+    fresh_demo_fleet: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """R-06: the catalog is a valid DuckDB file and must not become a fleet member."""
+    cache = fresh_demo_fleet / "duckfleet-cache"
+    counts = []
+    for _ in range(3):
+        code, out, _ = run(
+            capsys, *scan_args(fresh_demo_fleet, cache, "--progress", "json")
+        )
+        assert code == 0
+        counts.append(json.loads(out.splitlines()[-1])["summary"]["files_candidates"])
+    assert counts == [13, 13, 13]
+    catalogs = list(cache.rglob("catalog.duckdb"))
+    assert len(catalogs) == 1 and catalogs[0].is_file()

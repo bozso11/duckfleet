@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 import duckdb
+import pytest
 
 from duckfleet_core.demo import make_demo_fleet
 
@@ -20,6 +21,8 @@ EXPECTED_FILES = {
     "empty/empty.duckdb",
     "broken/corrupt.duckdb",
     "broken/truncated.duckdb",
+    "broken/highbit.duckdb",
+    "secure/encrypted.duckdb",
     "exp_01/run_01/metrics.duckdb.wal",
 }
 
@@ -85,6 +88,12 @@ def test_legacy_empty_and_broken_files(demo_fleet: Path) -> None:
     assert (demo_fleet / "broken" / "truncated.duckdb").stat().st_size == 100
     corrupt = (demo_fleet / "broken" / "corrupt.duckdb").read_bytes()
     assert corrupt[8:12] == b"DUCK" and len(corrupt) == 4096 + 8192
+    highbit = (demo_fleet / "broken" / "highbit.duckdb").read_bytes()
+    assert highbit == bytes(8) + b"DUCK" + b"\xff" * 8 + bytes(4096)
+    encrypted = demo_fleet / "secure" / "encrypted.duckdb"
+    assert encrypted.read_bytes()[8:12] == b"DUCK"
+    with pytest.raises(duckdb.CatalogException, match="encrypted database"):
+        duckdb.connect(str(encrypted), read_only=True)
     assert (demo_fleet / "exp_01" / "run_01" / "metrics.duckdb.wal").stat().st_size == 0
 
 
