@@ -1,8 +1,9 @@
-"""Command line interface: scan, report, make-demo, paths.
+"""Command line interface: scan, report, make-demo, paths, sql, summarize, preview.
 
 Exit codes: 0 success (even when some files failed), 1 usage error, 2 fatal
-(root missing, catalog build failed). ``scan --progress json`` prints one JSON
-object per line on stdout and nothing else there; logs go to stderr.
+(root missing, catalog build failed, no catalog), 3 query error (``sql``,
+``summarize``, ``preview``). ``scan --progress json`` prints one JSON object per
+line on stdout and nothing else there; logs go to stderr.
 """
 
 from __future__ import annotations
@@ -16,7 +17,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from duckfleet_core import __version__
+from duckfleet_core import __version__, cli_query
 from duckfleet_core.catalog import CatalogReader
 from duckfleet_core.config import ScanConfig
 from duckfleet_core.coordinator import run_scan
@@ -80,6 +81,8 @@ def _build_parser() -> argparse.ArgumentParser:
     paths = sub.add_parser("paths", help="print the cache locations for ROOT")
     paths.add_argument("root")
     paths.add_argument("--cache-dir")
+
+    cli_query.add_parsers(sub)
     return parser
 
 
@@ -229,5 +232,8 @@ def main(argv: Sequence[str] | None = None) -> int:
         "report": _cmd_report,
         "make-demo": _cmd_make_demo,
         "paths": _cmd_paths,
+        "sql": cli_query.cmd_sql,
+        "summarize": cli_query.cmd_summarize,
+        "preview": cli_query.cmd_preview,
     }
     return handlers[args.command](args)

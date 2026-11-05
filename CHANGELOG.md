@@ -4,6 +4,18 @@
 
 v0.2 in progress (plan: `docs/PLAN_v0.2.md`).
 
+### Phase 3: CLI
+
+1. New commands `duckfleet sql ROOT DATABASE SQL`, `summarize ROOT DATABASE
+   SCHEMA.TABLE` and `preview ROOT DATABASE SCHEMA.TABLE` (module
+   `cli_query.py`). `DATABASE` is the `rel_path` listed by `report`; the
+   absolute path comes from the catalog. Output as an aligned table, CSV or
+   JSON lines. Exit codes: 0 ok, 1 usage, 2 fatal, 3 query error (kind and
+   message on stderr).
+2. `summarize` prints `(computed in N s)` or `(cached <computed_at>)` on
+   stderr; `--refresh` recomputes.
+3. Choices the plan left open are in D-027.
+
 ### Phase 2: summaries
 
 1. `duckfleet_core.summary`: `ColumnSummary`, `TableSummary` (schema version
