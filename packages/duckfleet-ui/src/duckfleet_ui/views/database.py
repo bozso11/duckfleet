@@ -39,23 +39,6 @@ def _file_state(info: dict[str, Any]) -> str:
     return CURRENT
 
 
-def _ordered_databases(dbs: pd.DataFrame) -> list[str]:
-    """Databases with status ``ok`` first, then the ones that failed in the scan."""
-    ok = dbs.loc[dbs["status"] == "ok", "rel_path"].tolist()
-    failed = dbs.loc[dbs["status"] != "ok", "rel_path"].tolist()
-    return ok + failed
-
-
-def _pick_database(dbs: pd.DataFrame) -> str | None:
-    options = _ordered_databases(dbs)
-    if not options:
-        return None
-    common.keep_valid("selected_rel_path", options)
-    return st.selectbox(
-        "Database", options, key="selected_rel_path", help="Shared with the Overview page."
-    )
-
-
 def _header(info: dict[str, Any], state: str) -> None:
     st.subheader(info["rel_path"])
     size_mb = info["size_bytes"] / 1_000_000
@@ -234,7 +217,7 @@ def render() -> None:
         return
     path, mtime = key
 
-    rel_path = _pick_database(access.databases(path, mtime))
+    rel_path = common.pick_database(access.databases(path, mtime))
     if rel_path is None:
         st.info("The catalog holds no database.")
         return

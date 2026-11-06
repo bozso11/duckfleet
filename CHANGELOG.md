@@ -4,6 +4,31 @@
 
 v0.2 in progress (plan: `docs/PLAN_v0.2.md`).
 
+### Phase 5: SQL page
+
+1. The SQL page (`views/sql.py`): the database selectbox shared with the other
+   pages, an expander **Schema** (tables, columns, types from the catalog), the
+   editor, **Run** and **Clear**, an expander **Options** (max rows shown, timeout
+   in seconds), a result grid with a caption (seconds, rows shown, number of
+   statements) and a warning when the result was cut. Errors show the kind and
+   DuckDB's message with a hint: `read_only` (duckfleet opens databases
+   read-only), `blocked` (file access, extensions and settings are disabled),
+   `timeout` (raise the timeout or narrow the query).
+2. **Prepare CSV** and **Prepare Parquet** run the text in the editor through
+   `export_query` (up to 1,000,000 rows, built in memory) and offer a download
+   button named `<database stem>_<yyyymmdd-hhmmss>.<ext>`; a truncated export
+   warns with the cap, and a prepared file is only offered while the editor
+   still holds the text it was made from.
+3. A history of the last 20 distinct queries (newest first), loaded into the
+   editor from a selectbox. The last result and the prepared download live in
+   the session state; the result is cleared when the database changes.
+4. Defaults of the database selectbox: databases with tables first, empty ones
+   next, failed ones last (the first entry is shown by default).
+5. Choices the plan left open are in D-029.
+6. Checked by hand on Windows in the built-in browser: no-catalog state with a
+   link to the Overview, a syntax error, max rows 5 with the cut warning, a
+   prepared CSV.
+
 ### Phase 4: Database page
 
 1. `st.navigation` now has three pages (`nav.py`): Overview, Database, SQL.

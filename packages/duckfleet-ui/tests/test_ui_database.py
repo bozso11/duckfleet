@@ -137,6 +137,9 @@ def test_columns_tab_of_the_events_table(pointed_at) -> None:
 def test_database_choice_lists_ok_databases_first(pointed_at) -> None:
     at = run_app()
     options = at.selectbox(key="selected_rel_path").options
+    assert options[0] != "empty/empty.duckdb"  # a database with tables is the default
+    assert options.index(RUN1) < options.index("empty/empty.duckdb")  # empty ones after those
+    assert options.index("empty/empty.duckdb") < options.index("broken/corrupt.duckdb")
     failed = {"broken/corrupt.duckdb", "broken/highbit.duckdb", "secure/encrypted.duckdb"}
     assert set(options[-3:]) == failed
     assert set(options[:-3]).isdisjoint(failed) and RUN1 in options

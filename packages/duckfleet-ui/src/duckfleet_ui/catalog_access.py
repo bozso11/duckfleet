@@ -112,6 +112,21 @@ def columns_frame(
     return _frame(rows, COLUMN_COLUMNS)
 
 
+@st.cache_data(show_spinner=False)
+def schema_frame(catalog_path: str, catalog_mtime_ns: int, rel_path: str) -> pd.DataFrame:
+    """One row per column of the database: ``table`` (schema.table), ``column``, ``type``."""
+    rows = CatalogReader(catalog_path).columns(rel_path)
+    frame = [
+        {
+            "table": f"{row['schema_name']}.{row['table_name']}",
+            "column": row["column_name"],
+            "type": row["data_type"],
+        }
+        for row in rows
+    ]
+    return pd.DataFrame(frame, columns=["table", "column", "type"])
+
+
 def _scan_sample_rows(reader: CatalogReader) -> int | None:
     run = reader.scan_run() or {}
     try:

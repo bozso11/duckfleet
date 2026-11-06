@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 from typing import Any
 
+import pandas as pd
 import streamlit as st
 
 from duckfleet_core.config import default_cache_dir
@@ -49,6 +50,32 @@ def keep(*keys: str) -> None:
     for key in keys:
         if key in st.session_state:
             st.session_state[key] = st.session_state[key]
+
+
+def ordered_databases(dbs: pd.DataFrame) -> list[str]:
+    """Databases with status ``ok`` first (the ones with tables before empty ones), then errors.
+
+    The first entry is what the page shows by default, so it should be worth looking at.
+    """
+    is_ok = dbs["status"] == "ok"
+    with_tables = is_ok & (dbs["n_tables"].fillna(0) > 0)
+    ok_empty = is_ok & ~with_tables
+    return [
+        *dbs.loc[with_tables, "rel_path"],
+        *dbs.loc[ok_empty, "rel_path"],
+        *dbs.loc[~is_ok, "rel_path"],
+    ]
+
+
+def pick_database(dbs: pd.DataFrame) -> str | None:
+    """The database selectbox of the Database and SQL pages (key shared with the Overview)."""
+    options = ordered_databases(dbs)
+    if not options:
+        return None
+    keep_valid("selected_rel_path", options)
+    return st.selectbox(
+        "Database", options, key="selected_rel_path", help="Shared by all pages."
+    )
 
 
 def init_state(cache: Path) -> None:
