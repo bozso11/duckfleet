@@ -4,6 +4,31 @@
 
 v0.2 in progress (plan: `docs/PLAN_v0.2.md`).
 
+### Phase 4: Database page
+
+1. `st.navigation` now has three pages (`nav.py`): Overview, Database, SQL.
+   The Database page (`views/database.py`) shows one database of the scanned
+   fleet: header (size, families, tags, time window, health), the tables with
+   row counts and time windows, and three tabs: **Columns** (scan statistics
+   with the null share), **Summary** (a cached `SUMMARIZE`, computed on
+   request, **Recompute** afterwards) and **Preview** (column selector, sort,
+   descending, page number, one page of `preview_rows` rows). **Open in SQL**
+   sets `sql_text` and switches to the SQL page.
+2. A database that failed in the scan shows its error and stops; a file that
+   vanished since the scan is explained instead of failing; a file whose size
+   or mtime differ from the catalog is marked "changed since the last scan".
+3. `query_access.py` (one `QueryConfig` per process, optional env overrides
+   `DUCKFLEET_QUERY_THREADS` and `DUCKFLEET_QUERY_MEMORY_MB`; cached preview
+   pages; summary helpers; result frames that never break the grid) and
+   `common.py` (the helpers the Overview had, plus keeping widget state across
+   pages). `views/sql.py` is a stub until Phase 5.
+4. `CatalogReader.database(rel_path)`.
+5. `streamlit>=1.66` (lazy tabs, D-028); `uv.lock` refreshed. The Overview's
+   Workers and Max files defaults live in the session state.
+6. Checked by hand on Windows in the built-in browser (`duckfleet-ui`):
+   Overview to Database to SQL through `st.switch_page`, the database
+   selection survives the page changes, the summary computes and shows.
+
 ### Phase 3: CLI
 
 1. New commands `duckfleet sql ROOT DATABASE SQL`, `summarize ROOT DATABASE

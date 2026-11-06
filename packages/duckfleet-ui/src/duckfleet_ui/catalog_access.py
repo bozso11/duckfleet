@@ -10,6 +10,7 @@ Code here works with pandas 2.2 and 3.x (explicit datetime conversion).
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,13 @@ FAMILY_COLUMNS = ["family_id", "n_members", "n_tables", "tables", "members"]
 VARIANT_COLUMNS = ["table", "n_variants", "fp_strict", "n_members", "n_columns", "columns"]
 TIMELINE_COLUMNS = ["rel_path", "family_strict", "time_min", "time_max"]
 PROBLEM_COLUMNS = ["rel_path", "status", "error_type", "health", "message"]
+TABLE_COLUMNS = [
+    "schema_name", "table_name", "kind", "row_count", "n_columns", "time_min", "time_max", "error",
+]  # fmt: skip
+COLUMN_COLUMNS = [
+    "ordinal", "column_name", "data_type", "null_share", "min_value", "max_value",
+    "approx_distinct", "sampled",
+]  # fmt: skip
 REJECTED_COLUMNS = ["rel_path", "reason"]
 
 
@@ -63,6 +71,53 @@ def databases(catalog_path: str, catalog_mtime_ns: int) -> pd.DataFrame:
         row["tags"] = ", ".join(f"{key}={value}" for key, value in row["tags"].items())
         row["health"] = ", ".join(row["health"])
     return _datetimes(_frame(rows, DATABASE_COLUMNS), ["time_min", "time_max"])
+
+
+@st.cache_data(show_spinner=False)
+def database_info(catalog_path: str, catalog_mtime_ns: int, rel_path: str) -> dict[str, Any]:
+    """The catalog row of one database (empty when it is not in the catalog)."""
+    return CatalogReader(catalog_path).database(rel_path) or {}
+
+
+@st.cache_data(show_spinner=False)
+def tables_frame(catalog_path: str, catalog_mtime_ns: int, rel_path: str) -> pd.DataFrame:
+    rows = CatalogReader(catalog_path).tables(rel_path)
+    return _datetimes(_frame(rows, TABLE_COLUMNS), ["time_min", "time_max"])
+
+
+@st.cache_data(show_spinner=False)
+def columns_frame(
+    catalog_path: str, catalog_mtime_ns: int, rel_path: str, schema_name: str, table_name: str
+) -> pd.DataFrame:
+    """Columns of one table with the null share of the scan's cheap stats.
+
+    The share is ``1 - non_null_count / rows``; for a sampled column the denominator is the
+    sample size from the scan's configuration, because the count describes the sample.
+    """
+    reader = CatalogReader(catalog_path)
+    table = next(
+        (t for t in reader.tables(rel_path)
+         if (t["schema_name"], t["table_name"]) == (schema_name, table_name)),
+        None,
+    )  # fmt: skip
+    row_count = table["row_count"] if table else None
+    sample_rows = _scan_sample_rows(reader)
+    rows = reader.columns(rel_path, schema_name, table_name)
+    for row in rows:
+        denominator = sample_rows if row["sampled"] else row_count
+        count = row["non_null_count"]
+        row["null_share"] = (
+            1 - count / denominator if count is not None and denominator else None
+        )
+    return _frame(rows, COLUMN_COLUMNS)
+
+
+def _scan_sample_rows(reader: CatalogReader) -> int | None:
+    run = reader.scan_run() or {}
+    try:
+        return int(json.loads(run.get("config_json") or "{}")["stats_sample_rows"])
+    except (KeyError, TypeError, ValueError):
+        return None
 
 
 @st.cache_data(show_spinner=False)

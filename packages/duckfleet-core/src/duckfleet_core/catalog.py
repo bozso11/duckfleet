@@ -282,6 +282,16 @@ class CatalogReader:
             row["health"] = json.loads(row.pop("health_json") or "[]")
         return rows
 
+    def database(self, rel_path: str) -> dict[str, Any] | None:
+        """The row of one database (``tags`` and ``health`` parsed), or ``None``."""
+        rows = self._rows("SELECT * FROM databases WHERE rel_path = ?", [rel_path])
+        if not rows:
+            return None
+        row = rows[0]
+        row["tags"] = json.loads(row.pop("tags_json") or "{}")
+        row["health"] = json.loads(row.pop("health_json") or "[]")
+        return row
+
     def tables(self, rel_path: str | None = None) -> list[dict[str, Any]]:
         sql = "SELECT * FROM tables"
         params: list[Any] = []

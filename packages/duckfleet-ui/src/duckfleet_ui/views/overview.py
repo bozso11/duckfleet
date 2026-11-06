@@ -10,58 +10,20 @@ catalog is only read through ``catalog_access`` (cached per catalog mtime).
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
-from typing import Any
 
 import pandas as pd
 import plotly.express as px
 import streamlit as st
 
-from duckfleet_core.config import MAX_POOL_WORKERS, ScanConfig, default_cache_dir
+from duckfleet_core.config import MAX_POOL_WORKERS, ScanConfig
 from duckfleet_core.fingerprint import SchemaDiff
-from duckfleet_core.store import ProfileStore, recent_roots
+from duckfleet_core.store import recent_roots
 from duckfleet_ui import catalog_access as access
+from duckfleet_ui import common
 from duckfleet_ui.scan_runner import ScanOptions, run_scan_subprocess
 
-ENV_ROOT = "DUCKFLEET_ROOT"
-ENV_CACHE_DIR = "DUCKFLEET_CACHE_DIR"
-
-
 # ---------------------------------------------------------------- helpers
-
-
-def _cache_dir() -> Path:
-    env = os.environ.get(ENV_CACHE_DIR)
-    return Path(env) if env else default_cache_dir()
-
-
-def _clean_root(text: str) -> str:
-    """Pasted Windows paths often come with quotes."""
-    return text.strip().strip('"').strip("'").strip()
-
-
-def _catalog_path(cache_dir: Path, root: str) -> Path:
-    return ProfileStore(cache_dir, Path(root)).catalog_path
-
-
-def _keep_valid(key: str, options: list[Any]) -> None:
-    """Drop a stored selection that is no longer among the options (after a rescan)."""
-    if key in st.session_state and st.session_state[key] not in options:
-        del st.session_state[key]
-
-
-def _init_state(cache_dir: Path) -> None:
-    state = st.session_state
-    env_root = os.environ.get(ENV_ROOT, "")
-    if "root_input" not in state:
-        recents = recent_roots(cache_dir)
-        state["root_input"] = env_root or (recents[0]["root"] if recents else "")
-    if "active_root" not in state:
-        state["active_root"] = None
-        # Launched with DUCKFLEET_ROOT and a catalog exists: show it without a click.
-        if env_root and _catalog_path(cache_dir, _clean_root(env_root)).is_file():
-            state["active_root"] = _clean_root(env_root)
 
 
 def _pick_recent() -> None:
@@ -85,17 +47,18 @@ def _sidebar(cache_dir: Path) -> tuple[str, ScanOptions, bool, bool]:
             format_func=lambda value: value or "(choose)",
         )
         st.text_input("Root folder", key="root_input", help="Folder tree with DuckDB files")
+        # Defaults go into the session state, not into ``value=``: the state of these widgets
+        # is carried over to the other pages (common.keep), which would clash with ``value=``.
+        st.session_state.setdefault("workers_input", ScanConfig().resolved_workers())
+        st.session_state.setdefault("max_files_input", ScanConfig().max_files)
         st.number_input(
             "Workers",
             min_value=1,
             max_value=MAX_POOL_WORKERS,
-            value=ScanConfig().resolved_workers(),
             key="workers_input",
             help="Worker processes; default is all CPU cores but two",
         )
-        st.number_input(
-            "Max files", min_value=1, value=ScanConfig().max_files, step=100, key="max_files_input"
-        )
+        st.number_input("Max files", min_value=1, step=100, key="max_files_input")
         st.checkbox("Full rescan", key="full_input", help="Ignore cached profiles")
         st.checkbox("Sniff all files", key="sniff_input", help="Header-check every file")
         scan_clicked = st.button("Scan", type="primary", width="stretch")
@@ -109,7 +72,7 @@ def _sidebar(cache_dir: Path) -> tuple[str, ScanOptions, bool, bool]:
         sniff_all=bool(st.session_state["sniff_input"]),
         cache_dir=str(cache_dir),
     )
-    return _clean_root(st.session_state["root_input"]), options, scan_clicked, load_clicked
+    return common.clean_root(st.session_state["root_input"]), options, scan_clicked, load_clicked
 
 
 def _scan(root: str, options: ScanOptions) -> None:
@@ -168,7 +131,7 @@ def _scan(root: str, options: ScanOptions) -> None:
 
 
 def _load(root: str, cache_dir: Path) -> None:
-    if root and _catalog_path(cache_dir, root).is_file():
+    if root and common.catalog_path(cache_dir, root).is_file():
         st.session_state["active_root"] = root
     else:
         st.warning("No catalog for this root yet. Press Scan.")
@@ -212,14 +175,14 @@ def _fleet_table(dbs: pd.DataFrame) -> None:
         ],
     )  # fmt: skip
     options = dbs["rel_path"].tolist()
-    _keep_valid("selected_rel_path", options)
+    common.keep_valid("selected_rel_path", options)
     st.selectbox(
         "Selected database",
         options,
         index=None,
         placeholder="Choose a database",
         key="selected_rel_path",
-        help="Remembered for the database page that comes in a later version.",
+        help="Also the selection on the Database page.",
     )
 
 
@@ -317,8 +280,8 @@ def _diff(path: str, mtime: int, dbs: pd.DataFrame) -> None:
     if not labels:
         st.info("Nothing to compare.")
         return
-    _keep_valid("diff_a", labels)
-    _keep_valid("diff_b", labels)
+    common.keep_valid("diff_a", labels)
+    common.keep_valid("diff_b", labels)
     left, right = st.columns(2)
     label_a = left.selectbox("A", labels, key="diff_a")
     label_b = right.selectbox("B", labels, index=min(1, len(labels) - 1), key="diff_b")
@@ -410,8 +373,9 @@ def _problems(path: str, mtime: int) -> None:
 
 def render() -> None:
     """Render the Overview page."""
-    cache_dir = _cache_dir()
-    _init_state(cache_dir)
+    cache_dir = common.cache_dir()
+    common.init_state(cache_dir)
+    common.keep(*common.KEPT_KEYS)
     root, options, scan_clicked, load_clicked = _sidebar(cache_dir)
 
     st.title("duckfleet")
@@ -428,7 +392,7 @@ def render() -> None:
     if not active:
         st.info("Choose a root folder in the sidebar and press Scan, or load an existing catalog.")
         return
-    key = access.catalog_key(_catalog_path(cache_dir, active))
+    key = access.catalog_key(common.catalog_path(cache_dir, active))
     if key is None:
         st.warning(f"No catalog found for {active}. Press Scan.")
         return
