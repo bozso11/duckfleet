@@ -5,7 +5,7 @@ are, which table structures exist and how many of each, which time windows
 and runs they hold, then deep dive into one file, query it and plot its
 columns.
 
-Status: v0.1.1 (scan + fleet overview, with the fixes of the v0.1 review) is
+Status: v0.2 (scan, fleet overview, database deep dive, read-only SQL) is
 implemented; what it does is in `CHANGELOG.md` and `docs/FEATURES.md`, what
 comes next in `docs/ROADMAP.md`. The plans are `docs/PLAN_v0.1.md` and
 `docs/PLAN_v0.2.md`.
@@ -20,26 +20,40 @@ uv sync --all-packages
 uv run duckfleet make-demo ./demo-fleet    # small example fleet to try things on
 uv run duckfleet scan ./demo-fleet         # profiles every file, builds the catalog
 uv run duckfleet report ./demo-fleet       # text summary of the fleet
+uv run duckfleet sql ./demo-fleet exp_01/run_01/metrics.duckdb "select count(*) from events"
+uv run duckfleet summarize ./demo-fleet exp_01/run_01/metrics.duckdb main.events
+uv run duckfleet preview ./demo-fleet exp_01/run_01/metrics.duckdb main.events --rows 5 --order-by ts --desc
 uv run duckfleet-ui                        # Streamlit app
 ```
 
 1. `scan` writes one JSON profile per database and a catalog into the user
    cache (never into the scanned folder); `duckfleet paths ./demo-fleet`
    prints the location. A second scan reuses the profiles of unchanged files.
-2. `duckfleet-ui` opens the Overview page: enter a root folder in the
+2. `sql`, `summarize` and `preview` take the root, the database as listed by
+   `report` (its `rel_path`) and, for the last two, `SCHEMA.TABLE`. They open
+   the database read-only: no writes, no file access, no extensions. Output is
+   a text table, CSV or JSON (`--format`); exit code 3 means a query error.
+   Summaries are cached next to the scan profiles until the file changes.
+3. `duckfleet-ui` opens the Overview page: enter a root folder in the
    sidebar, press **Scan** (the page waits behind a progress bar) or **Load
-   existing catalog**. Extra arguments go to Streamlit, for example
+   existing catalog**. The **Database** page shows the tables of one database
+   with their columns, a cached per-column summary and a paged preview, and
+   **Open in SQL** hands a query to the **SQL** page: a read-only editor with
+   a row limit, a timeout, CSV and Parquet downloads and a query history.
+   Extra arguments go to Streamlit, for example
    `uv run duckfleet-ui --server.port 8600`. The environment variables
    `DUCKFLEET_ROOT` and `DUCKFLEET_CACHE_DIR` set the initial root and the
-   cache directory.
-3. `uv run pytest` and `uv run ruff check .` run the checks CI runs on
+   cache directory; `DUCKFLEET_QUERY_THREADS` and `DUCKFLEET_QUERY_MEMORY_MB`
+   override the threads and memory of the query connection.
+4. `uv run pytest` and `uv run ruff check .` run the checks CI runs on
    Windows and Linux.
 
 ## Packages
 
 1. `packages/duckfleet-core`: discovery, read-only profiling in a parallel
    worker pool, schema fingerprints and families, profile cache, catalog
-   (a DuckDB file), CLI (`scan`, `report`, `make-demo`, `paths`). No UI
+   (a DuckDB file), read-only query layer and summaries, CLI (`scan`,
+   `report`, `make-demo`, `paths`, `sql`, `summarize`, `preview`). No UI
    dependency.
 2. `packages/duckfleet-ui`: Streamlit app over the core: fleet overview
    (v0.1), database deep dive and SQL (v0.2), plots (v0.3), cross-database
@@ -56,7 +70,8 @@ uv run duckfleet-ui                        # Streamlit app
 | `docs/ARCHITECTURE.md` | Components, data flow, storage, boundary rules |
 | `docs/DECISIONS.md` | Decision log |
 | `docs/ROADMAP.md` | Version ladder, open options, out of scope |
-| `docs/PLAN_v0.1.md` | Detailed implementation plan for v0.1 |
+| `docs/PLAN_v0.1.md`, `docs/PLAN_v0.2.md` | Detailed implementation plans for v0.1 and v0.2 |
+| `docs/REVIEW_v0.1.md` | Review of v0.1.0 (fixed in 0.1.1) |
 | `docs/PROPOSAL.md` | The original proposal and the answers that shaped it |
 | `CHANGELOG.md` | What each version shipped |
 | `CLAUDE.md` | Working rules for LLM sessions in this repository |

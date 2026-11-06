@@ -1,13 +1,14 @@
 # Architecture
 
-Last updated: 2026-11-05 (0.1.1). Section 5 holds the final catalog schema,
+Last updated: 2026-11-06 (0.2.0). Section 5 holds the final catalog schema,
 copied from `duckfleet_core/catalog.py` (`SCHEMA_SQL`).
 
 ## 1. Two packages, one boundary
 
 ```
-packages/duckfleet-core    library + CLI; depends on duckdb, pydantic, platformdirs, psutil
-packages/duckfleet-ui      Streamlit app; depends on duckfleet-core, streamlit, plotly, pandas, pyarrow
+packages/duckfleet-core    library + CLI; depends on duckdb, pydantic, platformdirs, psutil, pytz
+                           (optional extra `export`: pyarrow)
+packages/duckfleet-ui      Streamlit app; depends on duckfleet-core, streamlit>=1.66, plotly, pandas, pyarrow
 ```
 
 The boundary rule: core never imports the UI or its libraries at module
@@ -39,13 +40,24 @@ the CLI, notebooks and tests.
    writer, atomic replace) and reads it (per-request read-only
    connections).
 8. **report**: text and Markdown summaries from the catalog.
-9. **cli**: `scan`, `report`, `make-demo`, `paths`.
+9. **cli**: `scan`, `report`, `make-demo`, `paths`, and (v0.2) `sql`,
+   `summarize`, `preview`.
 10. **demo**: generator of a small fleet with known properties, used by
     tests and the acceptance checklist.
 11. **config / models**: `ScanConfig` (every option and its resolved
     default) and the pydantic models of a profile (`DatabaseProfile`,
     `TableProfile`, `ColumnInfo`, `ProfileError`) and of a scan
     (`ScanSummary`).
+12. **query** (v0.2): the only way to open a scanned file in the UI or CLI
+    process. `QueryConfig`, `open_readonly` (one sandboxed connection config
+    per process, D-021), `run_query`, `export_query` (CSV and Parquet through
+    Arrow, in memory), `preview_table`, `table_columns`, `QueryError` with
+    kinds. Every query runs in a one-thread executor under a timeout
+    enforced with `interrupt()` (D-024). `sqlutil.py` holds `quote_ident`.
+13. **summary** (v0.2): `summarize_table` (DuckDB `SUMMARIZE`, sampled above
+    the row threshold) and the `TableSummary` models; `store.SummaryStore`
+    caches them as JSON sidecars (D-020).
+14. **cli_query** (v0.2): the commands `sql`, `summarize`, `preview` (D-027).
 
 ## 3. Data flow
 
@@ -70,6 +82,17 @@ The UI runs the scan as a subprocess (`python -m duckfleet_core scan
 --progress json`) and reads progress events from its stdout. The process
 pool therefore never lives inside the Streamlit server process.
 
+Reading one database (v0.2):
+
+```
+catalog.duckdb  --abs_path, size, mtime-->  Database page / SQL page / CLI sql, summarize, preview
+                                               |  query.open_readonly (read_only, external access off,
+                                               |  configuration locked, fixed threads and memory)
+                                               v
+                                          scanned file   (one connection per call, closed in finally)
+summaries/<file_key>/<table_key>.json  <--  SummaryStore (valid while size, mtime, versions match)
+```
+
 ## 4. Storage locations
 
 ```
@@ -82,6 +105,7 @@ pool therefore never lives inside the Streamlit server process.
     catalog.duckdb
     catalog.duckdb.tmp                build target, replaced atomically, gone after a scan
     last_scan.json
+    summaries/<file_key>/<table_key>.json    SUMMARIZE results (v0.2), removed with the profile
 ```
 
 Nothing is written inside the scanned folder.
@@ -161,19 +185,39 @@ Rules:
 3. Workers: `spawn` context on both OSes; entry points in importable
    modules with plain-type arguments; DuckDB `threads=1` per worker so N
    workers use N cores.
+4. Queries (v0.2): inside the UI or CLI process every connection to a scanned
+   file uses the same config dict, because DuckDB refuses a second
+   connection to the same file with another config. Threads and memory are
+   resolved once per process and never page inputs. The lock is per
+   database instance, the time zone per session, so no zone is set and
+   TIMESTAMPTZ values show in the machine's zone (D-026).
+5. Query timeout: a watcher in the calling thread calls `interrupt()` on the
+   connection; no signals, so Windows and Linux behave alike.
 
-## 7. UI structure (v0.1)
+## 7. UI structure (v0.2)
 
 ```
 launch.py         console script duckfleet-ui -> streamlit run app.py
-app.py            st.set_page_config, st.navigation([Overview])
+app.py            st.set_page_config, st.navigation(list(nav.PAGES.values()))
+nav.py            the st.Page objects: Overview, Database, SQL (views import it inside functions)
+common.py         environment, root and catalog resolution, keep_valid, keep (widget state across
+                  pages), the shared database selectbox
 views/overview.py render(): sidebar (recent-roots selectbox, root folder, workers, max files,
                   full rescan, sniff all, Scan and Load existing catalog buttons), metrics,
                   fleet table, families + matrix, table variants, diff, timeline, health, rejected
+views/database.py render(): database selectbox, header, tables, lazy tabs Columns, Summary,
+                  Preview, Open in SQL
+views/sql.py      render(): schema expander, editor, Run, Clear, Options, result grid, downloads,
+                  history
 scan_runner.py    subprocess (python -m duckfleet_core scan --progress json) + JSON-lines
 catalog_access.py st.cache_data wrappers keyed by catalog path + mtime, DataFrames
+query_access.py   the process-wide QueryConfig, cached preview pages, summary helpers, result
+                  DataFrames (never cached for ad-hoc SQL)
 ```
 
-The page reads `DUCKFLEET_ROOT` and `DUCKFLEET_CACHE_DIR` for its defaults
-(the smoke test relies on them). Later versions add `views/database.py`,
-`views/sql.py`, `views/plot.py`.
+The pages read `DUCKFLEET_ROOT` and `DUCKFLEET_CACHE_DIR` for their defaults
+(the tests rely on them); `DUCKFLEET_QUERY_THREADS` and
+`DUCKFLEET_QUERY_MEMORY_MB` override the query connection's resources. State
+shared between pages lives in the session state: `active_root`,
+`selected_rel_path`, `selected_table`, `sql_text`. Later versions add
+`views/plot.py`.

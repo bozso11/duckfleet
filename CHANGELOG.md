@@ -2,7 +2,104 @@
 
 ## Unreleased
 
-v0.2 in progress (plan: `docs/PLAN_v0.2.md`).
+Nothing yet.
+
+## 0.2.0 (2026-11-06)
+
+Database deep dive and read-only SQL on top of the fleet overview (plan:
+`docs/PLAN_v0.2.md`), after the 0.1.1 review fixes below.
+
+### What it does
+
+1. **Database page** (`duckfleet-ui`): pick one database of the scanned
+   fleet; its tables with row counts and time windows; per table the columns
+   with the scan's cheap statistics, a per-column summary (DuckDB
+   `SUMMARIZE`, computed on request, cached as JSON sidecars until the file
+   changes) and a paged, sortable preview with a column selector. **Open in
+   SQL** hands a query to the SQL page.
+2. **SQL page**: a read-only, sandboxed editor on one database (no writes, no
+   file access, no extensions, no `SET`), a row limit, a timeout enforced with
+   `interrupt()`, CSV and Parquet downloads and a history of 20 queries.
+3. **CLI**: `duckfleet sql`, `summarize`, `preview`.
+4. **Core**: `duckfleet_core.query` (sandboxed connections, `run_query`,
+   `export_query`, `preview_table`), `duckfleet_core.summary`,
+   `store.SummaryStore`; `pytz` is a core dependency, `pyarrow` the optional
+   extra `export`.
+
+### Acceptance checklist (plan Section 8)
+
+1. [x] CI green on Windows and Linux for the 0.1.1 commit (`dbfd7bf`) and for
+   every v0.2 phase commit (`adb4804`, `fe6ffea`, `506dcdf`, `5a742db`,
+   `2cbcb14`); the result for the 0.2.0 commit is in the GitHub Actions run of
+   that commit.
+2. [x] Phase 0: the demo scan reports 16 walked, 13 candidates, 2 rejected, 10
+   ok, 3 failed (`corrupt`, `corrupt`, `encrypted`), families unchanged (checked
+   with the CLI on a fresh demo fleet); the `infinity` test passes
+   (`test_infinite_timestamps_never_open_a_time_window`); `duckfleet scan
+   --tag-pattern "("` exits 1 with `invalid tag pattern '(': missing ),
+   unterminated subpattern at position 0`; the AppTest with 72 patched CPUs
+   renders (`test_the_page_renders_on_a_machine_with_72_cpus`).
+3. [x] `duckfleet sql ./demo-fleet exp_01/run_01/metrics.duckdb "select
+   count(*) from events"` prints 1000; an `INSERT` exits 3 with `read_only`; a
+   `COPY ... TO` exits 3 with `blocked` and writes no file.
+4. [x] `duckfleet summarize ./demo-fleet exp_01/run_01/metrics.duckdb
+   main.events` prints 3 column rows with min, max, avg and quantiles; the
+   second call prints `(cached <time>)`; `--refresh` recomputes.
+5. [x] `duckfleet preview ... main.events --rows 5 --offset 5 --order-by ts
+   --desc` prints 5 rows in descending time order.
+6. [x] UI. Windows, by hand in the built-in browser with `duckfleet-ui` on the
+   demo fleet: Overview, Load existing catalog, Database page for
+   `exp_01/run_01/metrics.duckdb` with 2 tables, the Columns tab (null share
+   0 %), a Summary that was computed (and recomputed) and shows the same
+   `computed` time after leaving and returning to the page, a Preview sorted
+   by `ts` descending with a column subset; **Open in SQL** landed on the SQL
+   page with `SELECT * FROM "main"."events" LIMIT 100` for the same database;
+   max rows 5 gave the cut warning with 5 rows; **Prepare CSV** and **Prepare
+   Parquet** offered downloads of 4,809 and 2,654 bytes (100 rows); an
+   `INSERT` showed the `read_only` message; the cross-join with a timeout of
+   1 s showed the `timeout` message and the next query returned 1000. The
+   browser's save of a download was not clicked; the Parquet bytes are read
+   back in the AppTest. Linux: through AppTest in CI on Ubuntu
+   (`test_ui_database.py`, `test_ui_sql.py`), no manual session.
+7. [x] `TIMESTAMP WITH TIME ZONE` columns fetch, preview and query without
+   error (`test_result_columns_types_and_rows`,
+   `test_preview_of_a_timestamptz_table`, `test_timestamptz_values_display`).
+8. [x] `FEATURES.md`, `LIMITS.md`, `TUNING.md`, `ARCHITECTURE.md`,
+   `DECISIONS.md`, `ROADMAP.md`, `CHANGELOG.md`, `README.md` updated; versions
+   0.2.0.
+
+### Deviations from the plan
+
+1. `TimeZone` is not set on the query connection: the connect config does not
+   accept it and a `SET` before locking reaches only the first connection of
+   an instance (D-026). `to_arrow_table` has a `fetch_arrow_table` fallback.
+2. The CLI writes CSV and JSON from the fetched rows (no pyarrow), `preview`
+   shows 20 rows by default, and an unknown database or table is exit 1
+   (D-027).
+3. The Database page uses lazy tabs, which needs `streamlit>=1.66` (D-028);
+   `st.switch_page` works under `st.navigation`, so `st.page_link` is only used
+   for the way back to the Overview.
+4. SQL page: the row limit input accepts 1 to 100,000 (the plan says 100, its
+   acceptance case needs 5), the downloads export the text in the editor
+   (D-029); the database selectbox lists databases with tables first.
+5. Values the grid cannot hold are converted to text in Python, not cast in the
+   preview SQL (D-030).
+6. A CSV download of a result with nested columns fails with a hint to use
+   Parquet (LIMITS 21).
+
+### Open after 0.2.0
+
+1. Linux: no manual browser session, only AppTest in CI (WSL has no uv).
+2. The numbers marked (TBC) in `docs/LIMITS.md` and the tuning points are
+   untested on a real fleet; summaries of tables above the sampling threshold
+   are tested with a low threshold only.
+3. `incompatible_version` is still classified by message only.
+4. UI details: the Summary tab shows "Compute summary" until the next rerun
+   after a first computation; the selected tab and the preview inputs are not
+   kept when leaving the Database page.
+5. No LICENSE file (D-014), owner decision.
+
+### Build log by phase
 
 ### Phase 5: SQL page
 

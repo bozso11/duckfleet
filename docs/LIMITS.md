@@ -1,11 +1,11 @@
 # Limits
 
 Every hard and soft limit, its default, where it is configured, and what
-happens beyond it. Numbers marked (TBC) are proposals. The v0.1 acceptance
-run used the demo fleet only, so they stay (TBC) until a real fleet has been
-scanned.
+happens beyond it. Numbers marked (TBC) are proposals. The v0.1 and v0.2
+acceptance runs used the demo fleet only, so they stay (TBC) until a real
+fleet has been scanned.
 
-Last updated: 2026-11-05 (0.1.1).
+Last updated: 2026-11-06 (0.2.0).
 
 | ID | Limit | Default | Config | Beyond the limit | Since |
 |---|---|---|---|---|---|
@@ -16,8 +16,8 @@ Last updated: 2026-11-05 (0.1.1).
 | L-05 | Full column stats | tables up to 20 M rows (TBC) | `ScanConfig.stats_row_threshold` | non-temporal stats on a sample, `sampled=True` | v0.1 |
 | L-06 | Sample size above L-05 | 1 M rows (TBC) | `ScanConfig.stats_sample_rows` | | v0.1 |
 | L-07 | Content fingerprint | tables up to 10 k rows (TBC) | | skipped | v0.4 |
-| L-08 | Data preview page | 1,000 rows (TBC) | | paging | v0.2 |
-| L-09 | SQL result in grid / download | 10 k rows shown (page option up to 100 k), 1 M rows download (TBC) | `QueryConfig.max_rows`, `max_download_rows` | grid truncated with a notice; download cut at the cap with a warning (D-023) | v0.2 |
+| L-08 | Data preview page | 1,000 rows (TBC) | `QueryConfig.preview_rows` | paging; the page number input is bounded by the catalog's row count | v0.2 |
+| L-09 | SQL result in grid / download | 10 k rows shown (page option 1 to 100 k), 1 M rows download (TBC) | `QueryConfig.max_rows`, `max_download_rows` | grid truncated with a notice; download cut at the cap with a warning (D-023) | v0.2 |
 | L-10 | Worker crash | n/a | | a crashed pool marks the unfinished files `worker_crashed`; rerun the scan | v0.1 |
 | L-11 | Points per chart | 50 k after bucketing (TBC) | | bucket aggregates (mean, min, max) | v0.3 |
 | L-12 | Databases attached at once | 50 (TBC) | | pick a subset | v0.4 |
@@ -96,4 +96,21 @@ Last updated: 2026-11-05 (0.1.1).
     120,000 column rows (400 files with 10 tables of 30 columns).
 18. **Catalog rebuilt on every scan.** The cost grows with the total number of
     columns in the fleet, not with the data volume (D-003, D-016).
-
+19. **Query sandbox (v0.2).** The SQL page and the CLI open scanned files with
+    `enable_external_access=false` and a locked configuration: no `COPY ... TO`,
+    `ATTACH`, `read_csv`, `INSTALL`, `LOAD` or `SET`, and writes fail with
+    `read_only`. `CREATE TEMP TABLE` works (in memory, gone with the
+    connection). Several statements in one text run in order and the last
+    result is shown.
+20. **Time zone in query results.** `TIMESTAMP WITH TIME ZONE` values appear in
+    the machine's time zone (D-026), also in summaries; a summary cached on a
+    machine in another zone keeps the old zone until it is recomputed.
+21. **CSV download and nested columns.** The Arrow CSV writer has no list,
+    struct or map type: such a result fails with a message that points to
+    Parquet. Values that pandas or Arrow cannot hold in the grid (an integer
+    beyond 64 bits, a year outside the pandas range) are shown as text.
+22. **Summaries of views.** `SUMMARIZE` of a view runs the view's query and is
+    not sampled (the row count of a view is unknown); it can reach the timeout.
+23. **One query config per process.** `DUCKFLEET_QUERY_THREADS` and
+    `DUCKFLEET_QUERY_MEMORY_MB` are read once when the first query runs;
+    restart `duckfleet-ui` to change them.

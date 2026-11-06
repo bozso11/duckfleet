@@ -14,13 +14,13 @@ time-window timeline, health list, path-token tags, CLI (`scan`, `report`,
 `make-demo`, `paths`), Streamlit Overview page with blocking scan. Plan:
 `docs/PLAN_v0.1.md`; result in `CHANGELOG.md` 0.1.0.
 
-## v0.1.1 Review fixes (planned, Phase 0 of the v0.2 plan)
+## v0.1.1 Review fixes (done)
 
 The confirmed findings of `docs/REVIEW_v0.1.md`: catalog overflow on a
 high-bit storage version, `infinity` time windows, invalid tag patterns,
 the 64-CPU sidebar crash, and the smaller items.
 
-## v0.2 Single-database deep dive (planned: `docs/PLAN_v0.2.md`)
+## v0.2 Single-database deep dive (done: `docs/PLAN_v0.2.md`, result in `CHANGELOG.md` 0.2.0)
 
 Database page: table list with row counts, columns and types, per-column
 summary (`SUMMARIZE`, on demand, cached as JSON sidecars), paged and

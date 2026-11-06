@@ -5,7 +5,7 @@ Status values: `done vX` (shipped in version X), `planned vX` (in the
 version ladder), `open option` (not scheduled), `out of scope`. Update the
 row in the same commit that changes the behaviour.
 
-Last updated: 2026-11-05 (0.1.1; v0.2 in progress).
+Last updated: 2026-11-06 (0.2.0; v0.3 not started).
 
 ## Discovery and scanning
 
@@ -52,12 +52,12 @@ Last updated: 2026-11-05 (0.1.1; v0.2 in progress).
 
 | ID | Feature | Status | Limits | Notes |
 |---|---|---|---|---|
-| F-DB-01 | Table list with row counts, columns and types | planned v0.2 | | |
-| F-DB-02 | Per-column summary (SUMMARIZE style) | planned v0.2 | L-05 | lazy, cached in catalog |
-| F-DB-03 | Paged data preview | planned v0.2 | L-08 | |
-| F-DB-04 | Read-only SQL editor with result grid | planned v0.2 | L-09 | |
-| F-DB-05 | Download results as CSV or Parquet | planned v0.2 | L-09 | |
-| F-DB-06 | Query cancel or timeout | open option | | DuckDB `interrupt()` |
+| F-DB-01 | Table list with row counts, columns and types | done v0.2 | | Database page: tables with rows and time windows, Columns tab with the scan's stats and null share |
+| F-DB-02 | Per-column summary (SUMMARIZE style) | done v0.2 | L-05, L-16 | on request, cached as JSON sidecars (D-020), `duckfleet summarize` |
+| F-DB-03 | Paged data preview | done v0.2 | L-08, L-15 | column subset, sort, page number; `duckfleet preview` |
+| F-DB-04 | Read-only SQL editor with result grid | done v0.2 | L-09, L-14, L-17 | sandboxed connection (D-021), history of 20 queries; `duckfleet sql` |
+| F-DB-05 | Download results as CSV or Parquet | done v0.2 | L-09 | built in memory through Arrow (D-023); CSV cannot hold nested columns |
+| F-DB-06 | Query timeout | done v0.2 | L-14 | `interrupt()` from the calling thread (D-024); a cancel button stays an open option |
 | F-DB-07 | Saved queries | open option | | |
 
 ## Visualisation
@@ -83,10 +83,11 @@ Last updated: 2026-11-05 (0.1.1; v0.2 in progress).
 |---|---|---|---|---|
 | F-CLI-01 | `duckfleet scan`, `report`, `make-demo`, `paths` | done v0.1 | | |
 | F-CLI-02 | Report export to Markdown or HTML file | open option | | |
+| F-CLI-03 | `duckfleet sql`, `summarize`, `preview` | done v0.2 | L-09, L-14 | table, CSV or JSON output; exit code 3 for a query error (D-027) |
 | F-UI-01 | Streamlit Overview page | done v0.1 | | blocking scan behind a progress bar; metrics, fleet table, families + matrix, table variants, diff, timeline, health, rejected |
-| F-UI-02 | Database page | planned v0.2 | | |
+| F-UI-02 | Database page | done v0.2 | | lazy tabs (D-028) |
 | F-UI-03 | Plot page | planned v0.3 | | |
-| F-UI-04 | SQL page | planned v0.2 | | |
+| F-UI-04 | SQL page | done v0.2 | | D-029 |
 | F-DOC-01 | Feature matrix, limits, tuning, decisions, roadmap kept current | done v0.1 | | this file |
 | F-OPS-01 | Windows and Linux CI | done v0.0 | | Phase 0 |
 | F-OPS-02 | Multi-user, auth, hosting | out of scope | | |

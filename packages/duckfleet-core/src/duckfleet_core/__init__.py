@@ -6,4 +6,4 @@ Rules for this package (see CLAUDE.md and docs/ARCHITECTURE.md):
 - heuristics are marked with ``# TUNING(<id>)`` comments indexed in docs/TUNING.md.
 """
 
-__version__ = "0.1.1"
+__version__ = "0.2.0"
