@@ -5,6 +5,23 @@
 Work towards 0.4.0 (`docs/PLAN_v0.4.md`). The acceptance checklist is ticked in the
 0.4.0 entry.
 
+### Phase 3: plots and CLI
+
+CI: commit `cb96242` (phase 2) was green on both OSes (run 42463850373).
+
+1. `plotdata.fetch_plot_data_on(con, db_name, spec, config)` runs the plot on an open connection;
+   `fetch_plot_data` is unchanged for callers and `fetch_fleet_plot_data(selection, paths, spec,
+   config)` plots a union view (`db_name="memory"`); the members that could not be attached are
+   `PlotData.notes`. A column that is text in the view because its types differ cannot be a y
+   column or a line/scatter x (a clear error). `fleet.describe_fleet` returns the union views
+   without a query.
+2. `duckfleet fleet-tables ROOT [--databases a,b | --family F1 | --all]` lists each table with
+   its member count and the members that lack it; `duckfleet fleet-sql ROOT SQL [...] [--max-rows]
+   [--timeout] [--format table|csv|json]` runs SQL on the fleet connection. Both print attach
+   failures on stderr; the default selection is `--all`; more than 50 databases is a usage error.
+3. `duckfleet plot ROOT --family F1 main.events ...` (or `--databases a,b`) plots the union view
+   and colours by `database` unless `--color` says otherwise (D-046).
+
 ### Phase 2: content hash
 
 1. **Profile schema version 2: the next scan after upgrading re-profiles every file once.**

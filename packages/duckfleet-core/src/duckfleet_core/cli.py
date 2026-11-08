@@ -1,9 +1,10 @@
-"""Command line interface: scan, report, make-demo, paths, sql, summarize, preview, plot.
+"""Command line interface: scan, report, make-demo, paths, sql, summarize, preview, plot,
+fleet-tables, fleet-sql.
 
 Exit codes: 0 success (even when some files failed), 1 usage error, 2 fatal
-(root missing, catalog build failed, no catalog), 3 query error (``sql``,
-``summarize``, ``preview``, ``plot``). ``scan --progress json`` prints one JSON object per
-line on stdout and nothing else there; logs go to stderr.
+(root missing, catalog build failed, no catalog), 3 query error (``sql``, ``summarize``,
+``preview``, ``plot``, ``fleet-tables``, ``fleet-sql``). ``scan --progress json`` prints one
+JSON object per line on stdout and nothing else there; logs go to stderr.
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from duckfleet_core import __version__, cli_plot, cli_query
+from duckfleet_core import __version__, cli_fleet, cli_plot, cli_query
 from duckfleet_core.catalog import CatalogReader
 from duckfleet_core.config import ScanConfig
 from duckfleet_core.coordinator import run_scan
@@ -89,6 +90,7 @@ def _build_parser() -> argparse.ArgumentParser:
 
     cli_query.add_parsers(sub)
     cli_plot.add_parser(sub)
+    cli_fleet.add_parsers(sub)
     return parser
 
 
@@ -242,5 +244,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         "summarize": cli_query.cmd_summarize,
         "preview": cli_query.cmd_preview,
         "plot": cli_plot.cmd_plot,
+        "fleet-tables": cli_fleet.cmd_fleet_tables,
+        "fleet-sql": cli_fleet.cmd_fleet_sql,
     }
     return handlers[args.command](args)

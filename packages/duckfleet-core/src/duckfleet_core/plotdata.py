@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import math
 import time
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal
@@ -27,6 +28,7 @@ from typing import Literal
 import duckdb
 from pydantic import BaseModel, Field, field_validator, model_validator
 
+from duckfleet_core.fleet import MEMORY, AttachFailure, FleetSelection, open_fleet
 from duckfleet_core.profiler import is_numeric_type, is_temporal_type
 from duckfleet_core.query import (
     QueryConfig,
@@ -356,9 +358,7 @@ def validate_spec(
 
     The column lookup runs under ``timeout_s`` when given (W-10).
     """
-    columns = _table_columns(
-        con, db_name, spec.schema_name, spec.table_name, timeout_s=timeout_s
-    )
+    columns = _table_columns(con, db_name, spec.schema_name, spec.table_name, timeout_s=timeout_s)
     if not columns:
         raise QueryError("sql", f"unknown table or view {spec.schema_name}.{spec.table_name}")
     known = dict(columns)
@@ -766,10 +766,9 @@ def _shape(
         return _unique([n for n in names if n is not None]), rows, _order_series(series_weight)
 
     # bar: category, [series], v0, v1, ..., n, rk
-    value_names = (
-        [f"{spec.agg}({name})" if spec.agg != "count" else f"count({name})" for name in spec.y]
-        or ["count"]
-    )
+    value_names = [
+        f"{spec.agg}({name})" if spec.agg != "count" else f"count({name})" for name in spec.y
+    ] or ["count"]
     names = [_x_name(spec), *([spec.color] if has_s else []), *value_names]
     rows = [row[:-2] for row in result_rows]
     if has_s:
@@ -797,12 +796,8 @@ def _single_statement(con: duckdb.DuckDBPyConnection, sql: str) -> None:
         raise QueryError("sql", "the filter must be one boolean expression, not several statements")
 
 
-def fetch_plot_data(db_path: str | Path, spec: PlotSpec, config: QueryConfig) -> PlotData:
-    """Plan and run the plot queries on ``db_path`` (read-only, sandboxed).
-
-    Raises ``QueryError`` (kind ``sql`` for a bad spec or filter, ``timeout``, ``other``).
-    """
-    started = time.perf_counter()
+def _deadline(started: float, config: QueryConfig) -> Callable[[], float]:
+    """``remaining()``: seconds left of the plot's timeout, ``QueryError(timeout)`` when none."""
     deadline = started + config.timeout_s
 
     def remaining() -> float:
@@ -811,8 +806,27 @@ def fetch_plot_data(db_path: str | Path, spec: PlotSpec, config: QueryConfig) ->
             raise QueryError("timeout", f"the plot ran longer than {config.timeout_s:g} s")
         return left
 
-    with as_query_errors(), open_readonly(db_path, config) as con:
-        db_name = database_name(con, timeout_s=remaining())
+    return remaining
+
+
+def fetch_plot_data_on(
+    con: duckdb.DuckDBPyConnection,
+    db_name: str,
+    spec: PlotSpec,
+    config: QueryConfig,
+    *,
+    started: float | None = None,
+) -> PlotData:
+    """Plan and run the plot queries on an open sandboxed connection.
+
+    ``db_name`` is the database that holds the table (``memory`` for the union views of a
+    fleet connection). All statements share the timeout of ``config`` counted from ``started``
+    (``time.perf_counter()``, default: now). Raises ``QueryError``.
+    """
+    started = time.perf_counter() if started is None else started
+    remaining = _deadline(started, config)
+
+    with as_query_errors():
         column_types = validate_spec(con, db_name, spec, timeout_s=remaining())
         # the plan needs numbers that only the data can give: a first plan fixes the expressions
         draft = plan_plot(spec, rows=0, span_seconds=None, n_series=0, column_types=column_types)
@@ -874,3 +888,62 @@ def fetch_plot_data(db_path: str | Path, spec: PlotSpec, config: QueryConfig) ->
         sql=sql,
         notes=notes,
     )
+
+
+def fetch_plot_data(db_path: str | Path, spec: PlotSpec, config: QueryConfig) -> PlotData:
+    """Plan and run the plot queries on ``db_path`` (read-only, sandboxed).
+
+    Raises ``QueryError`` (kind ``sql`` for a bad spec or filter, ``timeout``, ``other``).
+    """
+    started = time.perf_counter()
+    remaining = _deadline(started, config)
+    with as_query_errors(), open_readonly(db_path, config) as con:
+        db_name = database_name(con, timeout_s=remaining())
+        return fetch_plot_data_on(con, db_name, spec, config, started=started)
+
+
+def _attach_notes(failures: list[AttachFailure]) -> list[str]:
+    return [f"{f.rel_path} could not be attached ({f.kind}): {f.message}" for f in failures]
+
+
+def fetch_fleet_plot_data(
+    selection: FleetSelection,
+    paths: dict[str, str],
+    spec: PlotSpec,
+    config: QueryConfig,
+) -> PlotData:
+    """Plan and run the plot queries on the union view ``spec.schema_name.spec.table_name``.
+
+    The fleet of ``selection`` is opened (``paths``: rel_path -> absolute path). The label
+    column of the view (``database``, see ``UnionView.label_column``) is an ordinary VARCHAR
+    column, so the series cap folds the files beyond the cap into ``(other)`` like any other
+    series. ``PlotData.notes`` carries the members that could not be attached. Raises
+    ``QueryError``.
+    """
+    started = time.perf_counter()
+    with as_query_errors(), open_fleet(selection, paths, config) as fleet:
+        assert fleet.con is not None
+        view = fleet.view(spec.schema_name, spec.table_name)
+        if view is None:
+            known = ", ".join(v.qualified for v in fleet.views) or "none"
+            raise QueryError(
+                "sql",
+                f"unknown table {spec.schema_name}.{spec.table_name} in the selected databases "
+                f"(tables: {known})",
+            )
+        # columns that must be numbers or times: a cast column is text, which only a category,
+        # a colour or a counted column can be
+        numeric = [*spec.y] if spec.kind == "histogram" or spec.agg != "count" else []
+        if spec.kind in ("line", "scatter") and spec.x:
+            numeric.append(spec.x)
+        as_text = [name for name in numeric if name.lower() in view.cast_names]
+        if as_text:
+            names = ", ".join(dict.fromkeys(as_text))
+            raise QueryError(
+                "sql",
+                f"{names} has different types in the selected databases and is shown as text; "
+                "choose other columns or other databases",
+            )
+        data = fetch_plot_data_on(fleet.con, MEMORY, spec, config, started=started)
+        data.notes = [*_attach_notes(fleet.failures), *data.notes]
+        return data

@@ -146,6 +146,11 @@ class UnionView:
     def qualified(self) -> str:
         return f"{self.schema_name}.{self.table_name}"
 
+    @property
+    def cast_names(self) -> set[str]:
+        """The cast columns, lower-cased (DuckDB column names are case-insensitive)."""
+        return {name.lower() for name in self.casts}
+
 
 @dataclass
 class FleetSummary:
@@ -391,6 +396,14 @@ def _build_views(
 
 
 # ---------------------------------------------------------------- queries on the fleet
+
+
+def describe_fleet(
+    selection: FleetSelection, paths: dict[str, str], config: QueryConfig
+) -> FleetSummary:
+    """Open the fleet connection, read what it holds (union views, attach failures), close it."""
+    with as_query_errors(), open_fleet(selection, paths, config) as fleet:
+        return fleet.summary()
 
 
 def run_fleet_query(
