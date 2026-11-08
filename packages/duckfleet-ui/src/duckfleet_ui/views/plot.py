@@ -223,7 +223,7 @@ def _form(
                 "Bar measure", AGGS, key="plot_agg", persist_state="session",
                 help="Applied to the first y column; without y columns rows are counted.",
             )  # fmt: skip
-            one.selectbox(
+            one.radio(
                 "Layout",
                 list(LAYOUTS),
                 format_func=LAYOUTS.get,

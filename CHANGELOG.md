@@ -2,25 +2,119 @@
 
 ## Unreleased
 
-1. `docs/PLAN_v0.3.md`: detailed plan for 0.2.1 (Phase 0) and v0.3 (Plot
-   page, `duckfleet plot`, chart rules).
-2. Decisions D-032 to D-034 and limits L-18 to L-21 added for v0.3.
-3. `duckfleet_core.plotdata` (v0.3 Phase 1): `PlotSpec`, `plan_plot`, `build_sql`
-   and `fetch_plot_data` reduce a table to a point budget inside DuckDB: time
-   buckets (mean, min, max), numeric buckets, equal-width histogram bins,
-   reservoir samples, top-N folding of series and bar categories; 140 tests on a
-   200,000-row table. No page or command uses it yet (D-036).
-4. `duckfleet plot ROOT DATABASE SCHEMA.TABLE --kind line|scatter|histogram|bar`
-   prints the reduced chart data as CSV or JSON with a summary line (strategy,
-   bucket, points) and, with `--show-sql`, the query on stderr; `make-demo
-   --big` adds a 200,000-row table (D-037).
-5. **Plot page** (v0.3 Phase 3): pick a database and table, a chart kind (line,
-   scatter, histogram, bar), x, y columns, a colour column, an SQL filter and
-   the point budget; the data is reduced in DuckDB, drawn with Plotly under the
-   fixed chart rules (eight-colour palette in series order, `(other)` grey, one
-   y axis or one panel per column, min to max band), and shown with a caption
-   about the reduction, a table view, a CSV download and the SQL. **Plot this
-   table** on the Database page hands the table over (D-038).
+Nothing yet.
+
+## 0.3.0 (2026-11-08)
+
+Visualisation on top of the database deep dive (plan: `docs/PLAN_v0.3.md`),
+after the 0.2.1 review fixes below.
+
+### What it does
+
+1. **Plot page** (`duckfleet-ui`): pick a database and a table, a chart kind
+   (line, scatter, histogram, bar), x (temporal columns first, numeric next,
+   or the row order), y columns, a colour column for series, an SQL filter and
+   the point budget. DuckDB reduces the data (time buckets with mean, min and
+   max, numeric buckets, histogram bins, a reservoir sample for scatter,
+   folding of series and bar categories), so the browser never receives more
+   than the budget. The chart follows fixed rules (D-032): an eight-colour
+   palette in series order, `(other)` in grey, one y axis or one panel per y
+   column, the min to max band at 20 % opacity. The page shows a caption about
+   the reduction, the plotted data as a table, a CSV download and the SQL.
+2. **Plot this table** on the Database page hands the table over.
+3. **CLI** `duckfleet plot ROOT DATABASE SCHEMA.TABLE --kind ...` prints the
+   same reduced data as CSV or JSON, a summary line on stderr and, with
+   `--show-sql`, the query (D-037).
+4. **Core**: `duckfleet_core.plotdata` (`PlotSpec`, `plan_plot`, `build_sql`,
+   `fetch_plot_data`, `PlotData`); `duckfleet_ui.charts` holds the colours,
+   the template and the Plotly figures.
+5. `duckfleet make-demo --big` adds `exp_04/run_01/metrics.duckdb` (200,000
+   `events` rows over 30 days); without the flag the demo fleet is unchanged.
+
+### Acceptance checklist (plan Section 8)
+
+1. [x] CI green on Windows and Linux for the 0.2.1 commit `ab4e720` (run
+   42433450823) and for every v0.3 phase commit: phase 1 `13aa762` (run
+   42434323748), phase 2 `960d92d` (42434671639), phase 3 `ad8268d`
+   (42436243430); the run of the final commit is recorded in `CI_FINAL` below
+   once it has finished.
+2. [x] Phase 0: a spilling query (`memory_limit_mb=64`) writes nothing beside
+   the scanned file while a thread lists the folder, and the temp files appear
+   under the cache (`test_a_spilling_query_writes_nothing_beside_the_scanned_file`);
+   a timeout during the fetch of text and list columns is `timeout` in 5 of 5
+   runs; CSV and JSON output of `日本語 é` round-trips through a subprocess with
+   a latin-1 stdout as UTF-8 bytes with LF line ends; the SQL page honours a
+   timeout of 1 s set together with Run (`test_the_timeout_option_stops_a_runaway_query_and_the_next_one_runs`);
+   the preview shows a row inserted after the scan
+   (`test_preview_shows_rows_added_after_the_scan`).
+3. [x] `duckfleet plot ./demo-fleet exp_01/run_01/metrics.duckdb main.events
+   --kind line --x ts --y value --max-points 100 --format csv` prints 56
+   bucketed rows (a header and 56 rows, fewer than 100), the stderr summary says
+   `strategy=time_bucket bucket=3 hours points=56 rows_scanned=1000`;
+   `--show-sql` prints `SELECT time_bucket(INTERVAL '3 hours', "ts") ...`.
+4. [x] UI. Windows, by hand in the built-in browser with `duckfleet-ui` (dark
+   theme, detected automatically) on a freshly generated `make-demo --big` fleet
+   scanned from the sidebar: Plot page, `main.events` of
+   `exp_01/run_01/metrics.duckdb`: a line chart raw ("1,000 points, every one of
+   1,000 rows"); the same with max points 100 ("56 points from 1,000 rows:
+   bucketed to 3 hours, mean with min to max band", three traces, the band
+   filled to the min trace); a scatter coloured by `run_id` (one series, 8 px
+   markers, "reservoir sample of 100 of 1,000 rows"); a histogram of `value`
+   (50 bars summing to 1,000, no borders, `bargap` 0.1); a bar of `config.key`
+   counts (three categories of 1); the **Plotted data** table and **Download
+   CSV** (the media URL of the button served the CSV with the header and 56
+   rows, `text/csv`, no CR; the file was not saved); a filter `no_such_column >
+   1` showed `sql: Binder Error: Referenced column "no_such_column" not found
+   ...` and no chart; **Plot this table** on the Database page landed on the
+   Plot page with `main.events`, line, x `ts` and y `value` preselected. Through
+   AppTest in CI (Windows and Linux): `test_ui_plot.py` covers all of these
+   plus panels, the series cap and the hand-off through one session state,
+   `test_charts.py` the colours, the band traces and the single y axis.
+5. [x] `make-demo --big` (tests: `test_the_big_flag_adds_one_large_table_and_nothing_else`);
+   `plot` on `exp_04/run_01/metrics.duckdb` with the default budget finishes in
+   0.06 s and reports `bucket=1 minute` (43,200 points from 200,000 rows); the
+   page shows the same caption in 0.05 s; bucketing by the row order of the same
+   table takes 0.06 s.
+6. [x] `FEATURES.md`, `LIMITS.md`, `TUNING.md`, `ARCHITECTURE.md`,
+   `DECISIONS.md`, `ROADMAP.md`, `CHANGELOG.md`, `README.md` updated; versions
+   0.3.0.
+
+### Deviations from the plan
+
+1. `USING SAMPLE` is applied before `WHERE`, so the scatter sample wraps the
+   filtered subquery (plan Section 4 item 3 verified only the syntax; D-036).
+2. Float values enter the SQL as exact DOUBLE literals; a plain `0.1` is a
+   DECIMAL and pushed a histogram minimum into bin -1 (D-036).
+3. A bucketed line counts one more bucket per series than the plan's formula
+   (a span can straddle a grid boundary), so the budget guard cannot fire
+   (D-036).
+4. `temp_directory` must come after `enable_external_access` in the connect
+   config (plan Section 4 item 7 holds for that order only; D-035).
+5. The chart kind and the table selector sit above the form, because the
+   choices below depend on them (D-038); the layout option is a radio as planned.
+6. Streamlit's frontend paints the plot area and font of a figure whose layout
+   leaves them out, also with `theme=None`; the charts set both on the layout
+   (D-038).
+7. `classify_error` matches `interrupt error`, not the bare word; the timeout
+   waits in slices so Ctrl-C works on Windows (D-035).
+8. `plan_plot`, `PlotPlan` and `PlotData` have extra optional fields (`notes`,
+   `row_limit`, bucket details); the contract of the plan is unchanged (D-036).
+9. The plan's Phase 2 (CLI) and Phase 3 (page) were committed in that order.
+
+Outcomes of the plan's (TBC) items: Section 10 item 1 and 2 in D-038, item 3 in
+D-035, item 4 in D-037, item 5 in D-036 (summary in D-039).
+
+### Open after 0.3.0
+
+1. Linux: no manual browser session, only AppTest in CI (WSL has no uv).
+2. In the browser only the dark theme and the single-panel layout were seen;
+   the light theme and the panels are checked through the figures in the tests.
+3. The numbers marked (TBC) in `docs/LIMITS.md` and the tuning points (bucket
+   ladder, series cap, panel ratio) are untested on a real fleet.
+4. Open options (docs/ROADMAP.md): an HTML export of a chart from the CLI, log
+   axes, zoom that refetches finer buckets, saved plot specs, annotations,
+   Datashader.
+5. `row_number() over ()` for the row-order x was only timed on 200,000 rows.
 
 ## 0.2.1 (2026-11-08)
 

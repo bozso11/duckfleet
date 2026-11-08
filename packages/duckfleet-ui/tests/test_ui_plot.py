@@ -367,7 +367,7 @@ def test_several_scales_go_to_panels_and_the_page_says_so(pointed_at) -> None:
     layout = figure_of(at)["layout"]
     assert "yaxis2" in layout and not layout["yaxis2"].get("overlaying")
     assert "differ by more than 100x" in captions(at)
-    at.selectbox(key="plot_layout").select("one")
+    at.radio(key="plot_layout").set_value("one")
     at = submit(at)
     assert "yaxis2" not in figure_of(at)["layout"]
 
@@ -377,7 +377,7 @@ def test_a_colour_column_with_two_y_columns_uses_panels(pointed_at) -> None:
     b = base(MULTI, "main.events", "line")
     at.multiselect(key=f"plot_y|{b}").set_value(["value", "big"])
     at.selectbox(key=f"plot_color|{b}").select("run_id")
-    at.selectbox(key="plot_layout").select("one")  # the chart rules win
+    at.radio(key="plot_layout").set_value("one")  # the chart rules win
     at = submit(at)
     ok(at)
     assert "yaxis2" in figure_of(at)["layout"]

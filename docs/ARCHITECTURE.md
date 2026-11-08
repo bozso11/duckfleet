@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-11-08 (0.2.1). Section 5 holds the final catalog schema,
+Last updated: 2026-11-08 (0.3.0). Section 5 holds the final catalog schema,
 copied from `duckfleet_core/catalog.py` (`SCHEMA_SQL`).
 
 ## 1. Two packages, one boundary
@@ -98,6 +98,15 @@ catalog.duckdb  --abs_path, size, mtime-->  Database page / SQL page / CLI sql, 
                                                v
                                           scanned file   (one connection per call, closed in finally)
 summaries/<file_key>/<table_key>.json  <--  SummaryStore (valid while size, mtime, versions match)
+```
+
+Plotting (v0.3) goes through the same sandboxed connection:
+
+```
+Plot page / CLI plot --PlotSpec--> plotdata.fetch_plot_data
+        column lookup (duckdb_columns) -> one counts statement -> plan_plot (strategy, bucket)
+        -> one data query (time_bucket | numeric buckets | bins | reservoir sample | top-N folding)
+        -> PlotData (at most max_points points) --> charts.figure (UI only) / CSV, JSON (CLI)
 ```
 
 ## 4. Storage locations
@@ -206,7 +215,7 @@ Rules:
 5. Query timeout: a watcher in the calling thread calls `interrupt()` on the
    connection; no signals, so Windows and Linux behave alike.
 
-## 7. UI structure (v0.2)
+## 7. UI structure (v0.3)
 
 ```
 launch.py         console script duckfleet-ui -> streamlit run app.py

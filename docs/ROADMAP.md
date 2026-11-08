@@ -4,7 +4,7 @@ Each version gets a detailed plan (`docs/PLAN_vX.md`) before
 implementation and a `CHANGELOG.md` entry after. Feature IDs refer to
 `docs/FEATURES.md`.
 
-Last updated: 2026-11-04.
+Last updated: 2026-11-08.
 
 ## v0.1 Scan + fleet overview (done, 2026-11-04)
 
@@ -28,21 +28,22 @@ sortable preview, read-only sandboxed SQL page with result grid, timeout,
 CSV/Parquet download and query history; CLI `sql`, `summarize`, `preview`.
 F-DB-01..05, F-UI-02, F-UI-04.
 
-## v0.2.1 Review fixes (planned, Phase 0 of the v0.3 plan)
+## v0.2.1 Review fixes (done, 2026-11-08)
 
 The confirmed findings of `docs/REVIEW_v0.2.md`: DuckDB's temp directory
 moved from beside the scanned file into the cache, timeout classification
 during a fetch, UTF-8 CLI output, Ctrl-C, the stale preview cache, and the
 smaller items.
 
-## v0.3 Visualisation (planned: `docs/PLAN_v0.3.md`)
+## v0.3 Visualisation (done, 2026-11-08: `docs/PLAN_v0.3.md`, result in `CHANGELOG.md` 0.3.0)
 
 Plot page: pick table, chart kind (line, scatter, histogram, bar), x column
 (temporal first, numeric, or row order), several y columns on one axis or
 one panel each, colour column with a series cap, optional SQL filter;
 DuckDB-side time bucketing (mean with min to max band), numeric bins,
 reservoir sampling and bar folding to L-11 points; table view and CSV of
-the plotted data; CLI `plot` with optional HTML. F-PLOT-01..03, F-UI-03.
+the plotted data; CLI `plot` (CSV or JSON; no HTML, see the open options).
+F-PLOT-01..03, F-UI-03, F-CLI-04.
 
 ## v0.4 Cross-database
 
@@ -71,6 +72,10 @@ of small tables. F-X-01..02, F-PLOT-04, F-FLEET-08.
     appears or disappears (LIMITS 15).
 14. Option to keep the scan options (tag patterns, stats thresholds) in a
     config file and invalidate cached profiles when they change.
+15. A standalone HTML export of a chart from the CLI (needs the chart code
+    outside the UI package).
+16. Log axes, annotations, saved plot specs, and zoom that refetches finer
+    buckets for the visible range.
 
 ## Out of scope
 

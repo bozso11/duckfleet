@@ -5,7 +5,7 @@ happens beyond it. Numbers marked (TBC) are proposals. The v0.1 and v0.2
 acceptance runs used the demo fleet only, so they stay (TBC) until a real
 fleet has been scanned.
 
-Last updated: 2026-11-08 (0.2.1).
+Last updated: 2026-11-08 (0.3.0).
 
 | ID | Limit | Default | Config | Beyond the limit | Since |
 |---|---|---|---|---|---|
@@ -19,7 +19,7 @@ Last updated: 2026-11-08 (0.2.1).
 | L-08 | Data preview page | 1,000 rows (TBC) | `QueryConfig.preview_rows` | paging; the page number input is bounded by the catalog's row count | v0.2 |
 | L-09 | SQL result in grid / download | 10 k rows shown (page option 1 to 100 k), 1 M rows download (TBC) | `QueryConfig.max_rows`, `max_download_rows` | grid truncated with a notice; download cut at the cap with a warning (D-023) | v0.2 |
 | L-10 | Worker crash | n/a | | a crashed pool marks the unfinished files `worker_crashed`; rerun the scan | v0.1 |
-| L-11 | Points per chart | 50 k after bucketing (TBC) | | bucket aggregates (mean, min, max) | v0.3 |
+| L-11 | Points per chart | 50 k after bucketing (TBC) | `PlotSpec.max_points` (page option, `--max-points`) | line charts become bucket aggregates (mean, min, max), scatter charts a reservoir sample; histograms and bars are bounded by L-18 to L-20 instead; the final query is checked against the budget | v0.3 |
 | L-12 | Databases attached at once | 50 (TBC) | | pick a subset | v0.4 |
 | L-13 | Recent roots remembered | 20 | | oldest dropped | v0.1 |
 | L-14 | Query timeout (SQL page, preview, summary, CLI) | 60 s (page option 1 to 3,600 s) (TBC) | `QueryConfig.timeout_s` | the query is interrupted and reported as `timeout`; the connection stays usable (D-024). A phase that never checks the interrupt (one huge allocation, the Arrow conversion of an export) can delay the stop; it is bounded and was never a hang in testing | v0.2 |
@@ -134,3 +134,25 @@ Last updated: 2026-11-08 (0.2.1).
     as UTF-8 with LF line ends whatever the console code page. `--format
     table` uses the console encoding and replaces characters it cannot show
     with `?`; set `PYTHONUTF8=1` (or use another format) to see them.
+27. **Plot data is reduced in DuckDB (0.3.0).** The reduction reads the whole
+    filtered table once for the counts and once for the data, so a plot of a
+    very large table or of a slow view can reach the timeout (L-14); narrow the
+    filter or lower the budget. The row-order x (`row_number() over ()`)
+    follows the storage order of the table.
+28. **Rows that cannot be placed.** Rows whose x is NULL, NaN or infinite are
+    left out of line and scatter charts, NULL and non-finite values of a
+    histogram column out of its bins; the notes under the chart give the
+    counts. `rows_scanned` is the count after the filter.
+29. **Series.** A colour column shows at most 8 series (3 on a scatter chart,
+    L-19); the rest is one grey `(other)` series, NULL values are a grey
+    `(null)` series. The top series are chosen by row count of the filtered
+    table. A value that is literally `(other)` or `(null)` cannot be told from
+    the fold.
+30. **Bucket grid.** Time buckets are aligned to the origin of DuckDB's
+    `time_bucket` (epoch for sub-day widths, a Monday for 7 days) and labelled
+    by their start; the 30, 90 and 365 day widths are fixed day counts, not
+    calendar months or years. A temporal x is shown as naive UTC
+    (`TIMESTAMP WITH TIME ZONE` is converted, `DATE` becomes midnight).
+31. **Plot cache.** Plot data is cached by the Streamlit cache (16 entries),
+    keyed by the file's current size and mtime and the spec; a file that
+    changes without a new size or mtime is not noticed.

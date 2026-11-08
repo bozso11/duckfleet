@@ -5,10 +5,10 @@ are, which table structures exist and how many of each, which time windows
 and runs they hold, then deep dive into one file, query it and plot its
 columns.
 
-Status: v0.2 (scan, fleet overview, database deep dive, read-only SQL) is
+Status: v0.3 (scan, fleet overview, database deep dive, read-only SQL, plots) is
 implemented; what it does is in `CHANGELOG.md` and `docs/FEATURES.md`, what
-comes next in `docs/ROADMAP.md`. The plans are `docs/PLAN_v0.1.md` and
-`docs/PLAN_v0.2.md`.
+comes next in `docs/ROADMAP.md`. The plans are `docs/PLAN_v0.1.md`,
+`docs/PLAN_v0.2.md` and `docs/PLAN_v0.3.md`.
 
 ## Quick start
 
@@ -84,8 +84,8 @@ uv run duckfleet-ui                        # Streamlit app
 | `docs/ARCHITECTURE.md` | Components, data flow, storage, boundary rules |
 | `docs/DECISIONS.md` | Decision log |
 | `docs/ROADMAP.md` | Version ladder, open options, out of scope |
-| `docs/PLAN_v0.1.md`, `docs/PLAN_v0.2.md` | Detailed implementation plans for v0.1 and v0.2 |
-| `docs/REVIEW_v0.1.md` | Review of v0.1.0 (fixed in 0.1.1) |
+| `docs/PLAN_v0.1.md`, `docs/PLAN_v0.2.md`, `docs/PLAN_v0.3.md` | Detailed implementation plans for v0.1, v0.2 and v0.3 |
+| `docs/REVIEW_v0.1.md`, `docs/REVIEW_v0.2.md` | Reviews of v0.1.0 (fixed in 0.1.1) and v0.2.0 (fixed in 0.2.1) |
 | `docs/PROPOSAL.md` | The original proposal and the answers that shaped it |
 | `CHANGELOG.md` | What each version shipped |
 | `CLAUDE.md` | Working rules for LLM sessions in this repository |

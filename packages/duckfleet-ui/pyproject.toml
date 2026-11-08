@@ -1,6 +1,6 @@
 [project]
 name = "duckfleet-ui"
-version = "0.2.1"
+version = "0.3.0"
 description = "Streamlit UI for duckfleet"
 requires-python = ">=3.11,<3.14"
 dependencies = [
