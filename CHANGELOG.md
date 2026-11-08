@@ -36,8 +36,8 @@ after the 0.2.1 review fixes below.
 1. [x] CI green on Windows and Linux for the 0.2.1 commit `ab4e720` (run
    42433450823) and for every v0.3 phase commit: phase 1 `13aa762` (run
    42434323748), phase 2 `960d92d` (42434671639), phase 3 `ad8268d`
-   (42436243430); the run of the final commit is recorded in `CI_FINAL` below
-   once it has finished.
+   (42436243430), and phase 4 `db8b58b` (42436587529), the 0.3.0 commit
+   itself, was green on both OSes too (confirmed after this entry was written).
 2. [x] Phase 0: a spilling query (`memory_limit_mb=64`) writes nothing beside
    the scanned file while a thread lists the folder, and the temp files appear
    under the cache (`test_a_spilling_query_writes_nothing_beside_the_scanned_file`);
