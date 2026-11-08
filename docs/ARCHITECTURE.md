@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-11-08 (0.3.1). Section 5 holds the final catalog schema,
+Last updated: 2026-11-08 (0.4.0). Section 5 holds the final catalog schema,
 copied from `duckfleet_core/catalog.py` (`SCHEMA_SQL`).
 
 ## 1. Two packages, one boundary
@@ -68,7 +68,17 @@ the CLI, notebooks and tests.
 16. **plotdata** (v0.3): `PlotSpec`, `plan_plot`, `build_sql`, `fetch_plot_data`; turns a spec
     into one bounded DuckDB query (time buckets, numeric buckets, bins, reservoir sample, top-N
     folding) on the sandboxed query connection and returns `PlotData` (D-033, D-036).
-17. **cli_plot** (v0.3): the command `plot` (D-037).
+17. **cli_plot** (v0.3): the command `plot` (D-037); since 0.4 also `--databases` and `--family`.
+18. **fleet** (v0.4): `FleetSelection` (1 to 50 distinct rel_paths) and its aliases, `open_fleet` (an
+    in-memory DuckDB; the members attached read-only from catalog paths, then external access off and
+    the configuration locked, then one union view per table with a `database` column), `fleet_tables`,
+    `describe_fleet`, `run_fleet_query`, `export_fleet_query`. Every connection has its own temp folder
+    (D-040, D-044).
+19. **cli_fleet** (v0.4): the commands `fleet-tables` and `fleet-sql` and the selection options
+    `--databases`, `--family`, `--all` (D-046).
+20. **content hash** (v0.4): `profiler._content_hash` stores `TableProfile.content_hash` for tables up to
+    L-07 rows; the catalog has `tables.content_hash` and `CatalogReader.content_variants()`; the report
+    and the Overview read it (D-041, D-045).
 
 ## 3. Data flow
 
@@ -104,13 +114,29 @@ catalog.duckdb  --abs_path, size, mtime-->  Database page / SQL page / CLI sql, 
 summaries/<file_key>/<table_key>.json  <--  SummaryStore (valid while size, mtime, versions match)
 ```
 
-Plotting (v0.3) goes through the same sandboxed connection:
+Plotting (v0.3) goes through the same sandboxed connection (`fetch_plot_data_on` runs the same plan on any open
+connection, `fetch_plot_data` and `fetch_fleet_plot_data` open one):
 
 ```
 Plot page / CLI plot --PlotSpec--> plotdata.fetch_plot_data
         column lookup (duckdb_columns) -> one counts statement -> plan_plot (strategy, bucket)
         -> one data query (time_bucket | numeric buckets | bins | reservoir sample | top-N folding)
         -> PlotData (at most max_points points) --> charts.figure (UI only) / CSV, JSON (CLI)
+```
+
+Cross-database work (v0.4) goes through a fleet connection, opened per request:
+
+```
+SQL page / Plot page / CLI fleet-sql, fleet-tables, plot --family
+     |  catalog: rel_path -> abs_path of the chosen databases (at most 50)
+     v
+fleet.open_fleet:  duckdb.connect() in memory, own temp folder <pid>/fleet-<8 hex>
+     ATTACH '<abs path>' AS <alias> (READ_ONLY) for each member   (a failure is an AttachFailure)
+     SET enable_external_access = false; SET lock_configuration = true
+     CREATE VIEW "<schema>"."<table>" AS SELECT '<rel_path>' AS database, * FROM <alias>... UNION ALL BY NAME ...
+     |  user SQL / the plot plan runs here, under the timeout
+     v
+result + FleetSummary (aliases, attach failures, union views)      connection closed, folder removed
 ```
 
 ## 4. Storage locations
@@ -220,8 +246,13 @@ Rules:
    TIMESTAMPTZ values show in the machine's zone (D-026).
 5. Query timeout: a watcher in the calling thread calls `interrupt()` on the
    connection; no signals, so Windows and Linux behave alike.
+6. Fleet connections (v0.4): attached only from catalog paths and before the lockdown; user SQL
+   never runs before `lock_configuration` is set; aliases and view names come from file and table
+   names and are always quoted, rel_paths enter SQL only as escaped string literals; no cached
+   connections; each connection is its own DuckDB instance with its own temp folder, because two
+   instances must never share one (W-01).
 
-## 7. UI structure (v0.3)
+## 7. UI structure (v0.4)
 
 ```
 launch.py         console script duckfleet-ui -> streamlit run app.py
@@ -240,8 +271,10 @@ views/database.py render(): database selectbox, header, tables, lazy tabs Column
                   Preview, Open in SQL, and Plot this table (hands the table, its first
                   temporal column and first numeric column to the Plot page through
                   plot_prefill)
-views/sql.py      render(): schema expander, editor, form (Options + Run), Clear, result grid,
-                  downloads, history
+views/sql.py      render(): scope control, schema expander (union views and aliases in scope
+                  several), editor, form (Options + Run), Clear, result grid, downloads, history
+scope.py          scope_control(dbs, families) -> Scope(mode, rel_paths): radio One database /
+                  Several databases, multiselect (at most 50), Family selectbox (D-047)
 scan_runner.py    subprocess (python -m duckfleet_core scan --progress json) + JSON-lines
 catalog_access.py st.cache_data wrappers keyed by catalog path + mtime, DataFrames
 query_access.py   the process-wide QueryConfig (temp dir under the cache), cached preview pages and
@@ -257,4 +290,6 @@ shared between pages lives in the session state: `active_root`,
 another page (the six sidebar inputs, `selected_rel_path`, `selected_table`, `sql_text`,
 `sql_max_rows`, `sql_timeout`, the plot options) carry a `key` and `persist_state="session"`.
 The Plot page keeps its last request (the spec as JSON, not the data) in `plot_request`, and
-`plot_prefill` carries what **Plot this table** hands over.
+`plot_prefill` carries what **Plot this table** hands over. The scope lives in `scope_mode` and
+`scope_rel_paths` (shared by the SQL and Plot pages, `persist_state="session"`); results, downloads and
+plot requests carry `Scope.key` so a result never shows for another scope.

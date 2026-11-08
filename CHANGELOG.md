@@ -2,8 +2,109 @@
 
 ## Unreleased
 
-Work towards 0.4.0 (`docs/PLAN_v0.4.md`). The acceptance checklist is ticked in the
-0.4.0 entry.
+Nothing yet.
+
+## 0.4.0 (2026-11-08)
+
+Cross-database work on top of the 0.3 visualisation (plan: `docs/PLAN_v0.4.md`), after the 0.3.1
+review fixes below. **Upgrading re-profiles every file once**: the profile schema version is 2, so
+the first scan after the upgrade profiles all files again (the next one reuses them as before).
+
+### What it does
+
+1. **Fleet connection** (`duckfleet_core.fleet`): the chosen databases (at most 50) are attached
+   read-only, from catalog paths, to one in-memory DuckDB connection; then external access is
+   turned off and the configuration locked; then one union view per table name holds the rows of
+   every member with a `database` column (the rel_path). A member that cannot be attached is
+   reported (locked, encrypted, corrupt, missing) and the others still work. Every connection has its
+   own temp folder and is closed after the request.
+2. **Scope on the SQL and Plot pages**: *One database* (as before) or *Several databases*, a
+   multiselect that starts as the strict family of the selected database, a Family selectbox, a cap
+   of 50 with a caption. SQL runs against the union views and the per-file aliases; plots are
+   coloured by `database` and say how many files were folded into `(other)`.
+3. **Content fingerprints** of tables up to 10,000 rows (md5 of the sorted rows) in the scan, the
+   catalog, the report (**Identical small tables**) and the Overview (**Identical content**).
+4. **CLI**: `fleet-tables`, `fleet-sql` and `plot --databases/--family`.
+5. **0.3.1 fixes**: see the entry below.
+
+### Acceptance checklist (plan Section 8)
+
+1. [x] CI green on Windows and Linux for the 0.3.1 commit `7f51bc7` (run 42462230265) and for
+   every phase commit: phase 1 `b9753d9` (42463125448), phase 2 `cb96242` (42463850373), phase 3
+   `9e11c77` (42464481443), phase 4 `5dbee4e` (42465180749; the first Ubuntu attempt died
+   downloading uv from GitHub with HTTP 504 before any test ran, the re-run of that job passed).
+   The run of the 0.4.0 commit is recorded in the commit after it.
+2. [x] Phase 0: every item of `docs/REVIEW_v0.3.md` fixed with its test (entry 0.3.1; 75 tests).
+3. [x] On the demo fleet: `duckfleet fleet-tables ./demo-fleet --family F1` lists `main.config`
+   and `main.events` with 3 members each; `fleet-sql ./demo-fleet "select database, count(*) n from
+   events group by 1 order by 1" --all` prints the 8 files with `events` (1000 rows each) and
+   three attach failures on stderr (`broken/corrupt.duckdb` and `broken/highbit.duckdb` `corrupt`,
+   `secure/encrypted.duckdb` `encrypted`); `insert into events ...` exits 3 as `read_only` (also
+   `insert into <alias>.main.events ...`); `copy events to 'x.csv'` exits 3 as `blocked`.
+4. [x] `duckfleet plot ./demo-fleet --family F1 main.events --kind line --x ts --y value
+   --max-points 300 --format csv` exits 0 and prints 84 bucketed rows (6 hours) with the three
+   `database` series; the stderr summary says `databases=3 strategy=time_bucket bucket=6 hours`.
+5. [x] A scanned cache rewritten as 0.3.x left it (profile version 1) is profiled again in full by
+   the first scan (13 profiled, 0 reused) and reused afterwards (the 3 failed files are always
+   retried: 3 profiled, 10 reused); `report` prints `main.config: 1 content variant over 8
+   databases, largest group 8 databases` (the demo's `config` is the same in all runs, so also
+   within each experiment), `main.notes: 1 content variant over 2 databases` and `main.events: 8
+   content variants over 8 databases, no two are identical`. Also
+   `test_a_cache_from_version_one_is_profiled_again_in_full`.
+6. [x] UI. Windows, by hand in the built-in browser with `duckfleet-ui` (dark theme) on a freshly
+   generated `make-demo` fleet scanned from the page: the Overview has the section **Identical
+   content** (`main.config` 1 variant over 8 databases, `main.events` 8 variants, `main.notes` and
+   `main.samples` 1 variant each) and its expander; the SQL page in scope *Several databases* with
+   the F1 family selected (3 of 10 readable databases, the placeholder query
+   `SELECT database, count(*) FROM events GROUP BY 1` as the editor's placeholder) shows 3 rows
+   (`0.00 s | 3 rows shown`) after typing and running that query; the Plot page keeps the scope and
+   the selection, draws `main.events` as 3,000 points in 3 coloured series (legend: the three
+   databases) with the caption `3 databases | 3,000 points, every one of 3,000 rows | 0.04 s`; no
+   browser console errors. Through AppTest in CI (`test_ui_scope.py`, `test_ui_smoke.py`): the
+   family default, the placeholder query on the F1 family (3 rows), a query across 6 files (6
+   groups), a plot of `events` coloured by `database` (6 series, 3 folded beyond a cap of 3), the
+   cap caption for a family of 60, the Identical content section.
+7. [x] `FEATURES.md`, `LIMITS.md`, `TUNING.md`, `ARCHITECTURE.md`, `DECISIONS.md`, `ROADMAP.md`,
+   `CHANGELOG.md`, `README.md` updated; versions 0.4.0.
+
+### Deviations from the plan
+
+1. `UNION ALL BY NAME` does not fail at `CREATE VIEW` for incompatible column types (120 type pairs
+   tried); it fails when rows are read, which `LIMIT 0` and a NULL-constant probe do not show. The
+   casts to VARCHAR are therefore decided up front by type family (numeric, temporal, else text);
+   the plan's retry on a `BinderException` stays as a safety net (D-044; plan Section 10 item 1).
+2. A member table with its own `database` column breaks the union binder, so that view labels with
+   `duckfleet_database` (`UnionView.label_column`; plan Section 10 item 3, D-044).
+3. Additions to the contracts: `FleetSummary` (what `run_fleet_query` returns instead of the
+   handle), `FleetHandle.view_failures`, `UnionView.label_column`, `fleet.describe_fleet`, an error
+   for a y or x column that is text in the union view (D-044, D-046).
+4. The hash depends on column names, their order and the values as printed; a type counts only
+   through its printed form (the plan says "types"; D-045). The demo fleet is unchanged: its
+   `config` is the same in all 8 files, so the Overview shows 1 variant for it (an existing demo
+   test relies on that).
+5. `--all` (the default of `fleet-tables` and `fleet-sql`) includes databases whose scan failed
+   (D-046); a write to a union view is `read_only` (D-044).
+6. W-05 is fixed with unique helper column names instead of qualifying every column (D-043).
+7. The Overview section Identical content was built in Phase 2 with the report section (the plan
+   lists it under Phases 2 and 4).
+8. Plot page defaults: the colour is `database` except for a bar chart whose x already is it
+   (D-047).
+
+Outcomes of the plan's (TBC) items: Section 10 item 1 and 3 in D-044; item 2 in D-048.
+
+### Open after 0.4.0
+
+1. Linux: no manual browser session, only AppTest in CI (WSL has no uv).
+2. In the browser only the dark theme, a family of 3 and the line chart were seen; the 50-database
+   selection, the Family selectbox and the folded-files caption are checked through AppTest.
+3. The numbers marked (TBC) in `docs/LIMITS.md` and the tuning points are untested on a real fleet;
+   the attach cost was only measured for 8 files (0.01 s) and is paid on every query and every
+   rerun of the Plot page in scope *several databases*.
+4. Nested columns of unequal types (a STRUCT with other fields, a LIST of another type) are shown
+   as text in a union view; a smarter rule is a tuning point (`union-casts`).
+5. No LICENSE file (D-014), owner decision.
+
+### Build log by phase
 
 ### Phase 4: UI scope
 

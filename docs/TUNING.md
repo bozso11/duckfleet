@@ -6,7 +6,7 @@ more is known about the real fleet (folder conventions, metadata tables,
 time columns), change the rule, update this table and add a
 `docs/DECISIONS.md` entry if the change is a design choice.
 
-Last updated: 2026-11-08 (0.3.1: every marker below exists in the code, `grep -r "TUNING(" packages`).
+Last updated: 2026-11-08 (0.4.0: every marker below exists in the code, `grep -r "TUNING(" packages`).
 
 | ID | Where | What it decides | Current rule | How to tune |
 |---|---|---|---|---|

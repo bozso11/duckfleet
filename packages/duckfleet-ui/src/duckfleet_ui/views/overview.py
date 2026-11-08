@@ -256,12 +256,15 @@ def content_summary(variants: pd.DataFrame) -> pd.DataFrame:
     rows = []
     for table, group in variants.groupby("table", sort=True):
         sizes = sorted(group["n_members"].astype(int), reverse=True)
+        runs = [(n, sizes.count(n)) for n in dict.fromkeys(sizes)]  # 8 x 1 instead of 1 + 1 + ...
         rows.append(
             {
                 "table": table,
                 "variants": len(sizes),
                 "databases": sum(sizes),
-                "databases per variant": " + ".join(str(n) for n in sizes),
+                "databases per variant": " + ".join(
+                    f"{count} x {n}" if count > 1 else str(n) for n, count in runs
+                ),
                 "identical in": f"{sizes[0]} of {sum(sizes)}" if sizes[0] > 1 else "no two",
             }
         )

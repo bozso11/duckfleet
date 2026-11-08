@@ -299,6 +299,7 @@ def test_overview_shows_identical_content_of_small_tables(pointed_at) -> None:
     assert rows["main.config"]["identical in"] == "8 of 8"
     assert rows["main.notes"]["databases per variant"] == "2"
     assert rows["main.events"]["variants"] == 8 and rows["main.events"]["identical in"] == "no two"
+    assert rows["main.events"]["databases per variant"] == "8 x 1"  # not 1 + 1 + 1 + ...
     group_columns = ["table", "n_members", "row_count", "members"]
     groups = next(d.value for d in at.dataframe if list(d.value.columns) == group_columns)
     config = groups[groups["table"] == "main.config"]

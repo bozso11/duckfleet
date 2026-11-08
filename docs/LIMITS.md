@@ -5,7 +5,7 @@ happens beyond it. Numbers marked (TBC) are proposals. The v0.1 and v0.2
 acceptance runs used the demo fleet only, so they stay (TBC) until a real
 fleet has been scanned.
 
-Last updated: 2026-11-08 (0.3.1).
+Last updated: 2026-11-08 (0.4.0).
 
 | ID | Limit | Default | Config | Beyond the limit | Since |
 |---|---|---|---|---|---|
@@ -15,12 +15,12 @@ Last updated: 2026-11-08 (0.3.1).
 | L-04 | Memory limit per worker | `min(2048 MB, total_ram / 2 / workers)`, floor 256 MB (TBC) | `ScanConfig.worker_memory_limit_mb` | DuckDB spills or fails the query; the file is recorded as error | v0.1 |
 | L-05 | Full column stats | tables up to 20 M rows (TBC) | `ScanConfig.stats_row_threshold` | non-temporal stats on a sample, `sampled=True` | v0.1 |
 | L-06 | Sample size above L-05 | 1 M rows (TBC) | `ScanConfig.stats_sample_rows` | | v0.1 |
-| L-07 | Content fingerprint | tables up to 10 k rows (TBC) | `ScanConfig.content_hash_rows` (0 = off) | no hash for a larger table, a view or a table whose rows cannot be cast to text; a changed option needs `--full` (item 15) | v0.4 |
+| L-07 | Content fingerprint | tables up to 10,000 rows (confirmed in 0.4.0) | `ScanConfig.content_hash_rows` (0 = off) | no hash for a larger table, a view or a table whose rows cannot be cast to text; a changed option needs `--full` (item 15) | v0.4 |
 | L-08 | Data preview page | 1,000 rows (TBC) | `QueryConfig.preview_rows` | paging; the page number input is bounded by the catalog's row count | v0.2 |
 | L-09 | SQL result in grid / download | 10 k rows shown (page option 1 to 100 k), 1 M rows download (TBC) | `QueryConfig.max_rows`, `max_download_rows` | grid truncated with a notice; download cut at the cap with a warning (D-023) | v0.2 |
 | L-10 | Worker crash | n/a | | a crashed pool marks the unfinished files `worker_crashed`; rerun the scan | v0.1 |
 | L-11 | Points per chart | 50 k after bucketing (TBC) | `PlotSpec.max_points` (page option, `--max-points`) | line charts become bucket aggregates (mean, min, max), scatter charts a reservoir sample; histograms and bars are bounded by L-18 to L-20 instead; the final query is checked against the budget, and the same guard checks histogram and bar results against their own bounds | v0.3 |
-| L-12 | Databases attached at once | 50 (TBC) | | pick a subset | v0.4 |
+| L-12 | Databases attached at once | 50 (confirmed in 0.4.0) | `fleet.MAX_MEMBERS`, `FleetSelection` | pick a subset; see L-22 | v0.4 |
 | L-13 | Recent roots remembered | 20 | | oldest dropped | v0.1 |
 | L-14 | Query timeout (SQL page, preview, summary, CLI) | 60 s (page option 1 to 3,600 s) (TBC) | `QueryConfig.timeout_s` | the query is interrupted and reported as `timeout`; the connection stays usable (D-024). A phase that never checks the interrupt (one huge allocation, the Arrow conversion of an export) can delay the stop; it is bounded and was never a hang in testing | v0.2 |
 | L-15 | Preview columns shown by default | 50 (TBC) | `QueryConfig.preview_max_columns` | the rest selectable in the multiselect | v0.2 |

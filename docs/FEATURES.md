@@ -5,7 +5,7 @@ Status values: `done vX` (shipped in version X), `planned vX` (in the
 version ladder), `open option` (not scheduled), `out of scope`. Update the
 row in the same commit that changes the behaviour.
 
-Last updated: 2026-11-08 (0.3.1).
+Last updated: 2026-11-08 (0.4.0).
 
 ## Discovery and scanning
 
@@ -42,7 +42,7 @@ Last updated: 2026-11-08 (0.3.1).
 | F-FLEET-05 | Diff between two files or families (tables, columns, types) | done v0.1 | | |
 | F-FLEET-06 | Family-by-table matrix | done v0.1 | | |
 | F-FLEET-07 | Time-window timeline, one bar per file | done v0.1 | | files without temporal columns listed separately |
-| F-FLEET-08 | Content fingerprint of small tables (identical config detection) | planned v0.4 | L-07 | |
+| F-FLEET-08 | Content fingerprint of small tables (identical config detection) | done v0.4 | L-07 | md5 of the sorted rows of tables up to 10,000 rows (`ScanConfig.content_hash_rows`), stored in the profile and the catalog; the report section Identical small tables and the Overview section Identical content (D-041, D-045); the upgrade re-profiles every file once |
 | F-FLEET-09 | Identity query run against every file (user-supplied SQL) | open option | | depends on real metadata layout |
 | F-FLEET-10 | Type normalisation for fingerprints (INT vs INTEGER aliases) | open option | | TUNING type-normalization |
 | F-FLEET-11 | Column search across the fleet ("which files have column X") | open option | | |
@@ -67,15 +67,15 @@ Last updated: 2026-11-08 (0.3.1).
 | F-PLOT-01 | Line, scatter, histogram, bar for chosen columns | done v0.3 | L-11, L-18, L-20, L-21 | Plotly; fixed chart rules (D-032); table view and CSV of the plotted data; `duckfleet plot` prints the same data |
 | F-PLOT-02 | Temporal x axis offered first; DuckDB-side time bucketing and downsampling | done v0.3 | L-11, L-21 | mean with min to max band; numeric buckets, reservoir sample, bins; row order as x (D-033, D-036) |
 | F-PLOT-03 | Colour or group-by column; optional SQL filter | done v0.3 | L-19 | colour folds into `(other)` beyond the cap; the filter runs on the sandboxed connection |
-| F-PLOT-04 | Overlay the same table across files | planned v0.4 | L-12 | |
+| F-PLOT-04 | Overlay the same table across files | done v0.4 | L-12, L-19 | Plot page scope *several databases* and `duckfleet plot --databases/--family`: the union view of the table, coloured by `database`, files beyond the series cap folded into `(other)` |
 | F-PLOT-05 | Very large plots (Datashader) | open option | | would move the UI to Panel |
 
 ## Cross-database
 
 | ID | Feature | Status | Limits | Notes |
 |---|---|---|---|---|
-| F-X-01 | Attach a chosen subset read-only in one connection | planned v0.4 | L-12 | |
-| F-X-02 | Same table across files as one result with a `database` column | planned v0.4 | L-12 | |
+| F-X-01 | Attach a chosen subset read-only in one connection | done v0.4 | L-12, L-22 | `duckfleet_core.fleet.open_fleet`: in-memory connection, files attached read-only, external access off, configuration locked (D-040); a member that cannot be attached is reported and the others work |
+| F-X-02 | Same table across files as one result with a `database` column | done v0.4 | L-12, L-22 | one union view per table (`UNION ALL BY NAME`); columns with unrelated types are cast to text (D-044); SQL page scope *several databases*, CLI `fleet-sql` and `fleet-tables` |
 
 ## Interfaces and documentation
 
@@ -84,11 +84,13 @@ Last updated: 2026-11-08 (0.3.1).
 | F-CLI-01 | `duckfleet scan`, `report`, `make-demo`, `paths` | done v0.1 | | |
 | F-CLI-02 | Report export to Markdown or HTML file | open option | | |
 | F-CLI-03 | `duckfleet sql`, `summarize`, `preview` | done v0.2 | L-09, L-14 | table, CSV or JSON output; exit code 3 for a query error (D-027) |
-| F-CLI-04 | `duckfleet plot`: the reduced data of a chart as CSV or JSON | done v0.3 | L-11, L-18 to L-21 | same reduction as the Plot page; summary and `--show-sql` on stderr; no chart or HTML export (D-037) |
-| F-UI-01 | Streamlit Overview page | done v0.1 | | blocking scan behind a progress bar; metrics, fleet table, families + matrix, table variants, diff, timeline, health, rejected |
+| F-CLI-04 | `duckfleet plot`: the reduced data of a chart as CSV or JSON | done v0.3 | L-11, L-18 to L-21 | same reduction as the Plot page; summary and `--show-sql` on stderr; no chart or HTML export (D-037); `--databases` and `--family` plot a union view (0.4, D-046) |
+| F-CLI-05 | `duckfleet fleet-tables`, `fleet-sql` | done v0.4 | L-09, L-12, L-14 | `--databases`, `--family`, `--all` (default); attach failures on stderr; exit code 3 for a query error (D-046) |
+| F-UI-01 | Streamlit Overview page | done v0.1 | | blocking scan behind a progress bar; metrics, fleet table, families + matrix, table variants, identical content (0.4), diff, timeline, health, rejected |
 | F-UI-02 | Database page | done v0.2 | | lazy tabs (D-028) |
 | F-UI-03 | Plot page | done v0.3 | | **Plot this table** on the Database page hands the table over (D-038) |
-| F-UI-04 | SQL page | done v0.2 | | D-029 |
+| F-UI-04 | SQL page | done v0.2 | | D-029; scope *several databases* since 0.4 (D-047) |
+| F-UI-05 | Scope control (one database or several) on the SQL and Plot pages | done v0.4 | L-12 | multiselect of up to 50 readable databases, default the strict family of the selected database, a Family selectbox (D-047) |
 | F-DOC-01 | Feature matrix, limits, tuning, decisions, roadmap kept current | done v0.1 | | this file |
 | F-OPS-01 | Windows and Linux CI | done v0.0 | | Phase 0 |
 | F-OPS-02 | Multi-user, auth, hosting | out of scope | | |

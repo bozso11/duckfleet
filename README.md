@@ -5,10 +5,10 @@ are, which table structures exist and how many of each, which time windows
 and runs they hold, then deep dive into one file, query it and plot its
 columns.
 
-Status: v0.3 (scan, fleet overview, database deep dive, read-only SQL, plots) is
-implemented; what it does is in `CHANGELOG.md` and `docs/FEATURES.md`, what
-comes next in `docs/ROADMAP.md`. The plans are `docs/PLAN_v0.1.md`,
-`docs/PLAN_v0.2.md` and `docs/PLAN_v0.3.md`.
+Status: v0.4 (scan, fleet overview, database deep dive, read-only SQL, plots, and
+queries and plots across several databases) is implemented; what it does is in
+`CHANGELOG.md` and `docs/FEATURES.md`, what comes next in `docs/ROADMAP.md`. The
+plans are `docs/PLAN_v0.1.md` to `docs/PLAN_v0.4.md`.
 
 ## Quick start
 
@@ -24,6 +24,9 @@ uv run duckfleet sql ./demo-fleet exp_01/run_01/metrics.duckdb "select count(*) 
 uv run duckfleet summarize ./demo-fleet exp_01/run_01/metrics.duckdb main.events
 uv run duckfleet preview ./demo-fleet exp_01/run_01/metrics.duckdb main.events --rows 5 --order-by ts --desc
 uv run duckfleet plot ./demo-fleet exp_01/run_01/metrics.duckdb main.events --kind line --x ts --y value --max-points 100
+uv run duckfleet fleet-tables ./demo-fleet --family F1      # tables of one schema family, and who lacks them
+uv run duckfleet fleet-sql ./demo-fleet "select database, count(*) n from events group by 1 order by 1" --family F1
+uv run duckfleet plot ./demo-fleet --family F1 main.events --kind line --x ts --y value --max-points 300
 uv run duckfleet-ui                        # Streamlit app
 ```
 
@@ -43,6 +46,13 @@ uv run duckfleet-ui                        # Streamlit app
    sample for scatter, top-N folding for series and bar categories; a summary
    line (strategy, bucket width, points) goes to stderr, `--show-sql` adds the
    query. `make-demo --big` adds a table of 200,000 rows to try it on.
+   `fleet-tables`, `fleet-sql` and `plot --databases/--family` work on several databases at once
+   (`--databases a,b`, `--family F1`, `--all`; at most 50): the members are attached read-only to one
+   in-memory connection with one union view per table (`events` holds the `events` rows of every
+   member with a `database` column), so one query or one plot spans files. A member that cannot be
+   attached (locked, encrypted, corrupt) is reported on stderr and the others still work. The scan
+   also hashes the content of small tables (up to 10,000 rows) so identical `config` tables show up
+   in `report` and on the Overview; the first scan after upgrading to 0.4 re-profiles every file.
 3. `duckfleet-ui` opens the Overview page: enter a root folder in the
    sidebar, press **Scan** (the page waits behind a progress bar) or **Load
    existing catalog**. The **Database** page shows the tables of one database
@@ -53,7 +63,10 @@ uv run duckfleet-ui                        # Streamlit app
    histogram or bar of chosen columns, a colour column for series, an SQL
    filter and a point budget; DuckDB reduces the data (time buckets with a
    min to max band, a sample for scatter) so the browser never gets more than
-   the budget; the plotted data is shown as a table and downloadable as CSV.
+   the budget; the plotted data is shown as a table and downloadable as CSV. On the **SQL** and
+   **Plot** pages the **Scope** radio switches from one database to several: the selection starts
+   as the strict schema family of the selected database, queries run against the union views and
+   the per-file aliases, and plots are coloured by `database`.
    Extra arguments go to Streamlit, for example
    `uv run duckfleet-ui --server.port 8600`. The environment variables
    `DUCKFLEET_ROOT` and `DUCKFLEET_CACHE_DIR` set the initial root and the
@@ -66,8 +79,9 @@ uv run duckfleet-ui                        # Streamlit app
 
 1. `packages/duckfleet-core`: discovery, read-only profiling in a parallel
    worker pool, schema fingerprints and families, profile cache, catalog
-   (a DuckDB file), read-only query layer and summaries, CLI (`scan`,
-   `report`, `make-demo`, `paths`, `sql`, `summarize`, `preview`, `plot`). No UI
+   (a DuckDB file), read-only query layer and summaries, the fleet connection
+   (several databases in one sandboxed connection), CLI (`scan`, `report`, `make-demo`,
+   `paths`, `sql`, `summarize`, `preview`, `plot`, `fleet-tables`, `fleet-sql`). No UI
    dependency.
 2. `packages/duckfleet-ui`: Streamlit app over the core: fleet overview
    (v0.1), database deep dive and SQL (v0.2), plots (v0.3), cross-database
@@ -84,8 +98,8 @@ uv run duckfleet-ui                        # Streamlit app
 | `docs/ARCHITECTURE.md` | Components, data flow, storage, boundary rules |
 | `docs/DECISIONS.md` | Decision log |
 | `docs/ROADMAP.md` | Version ladder, open options, out of scope |
-| `docs/PLAN_v0.1.md`, `docs/PLAN_v0.2.md`, `docs/PLAN_v0.3.md` | Detailed implementation plans for v0.1, v0.2 and v0.3 |
-| `docs/REVIEW_v0.1.md`, `docs/REVIEW_v0.2.md` | Reviews of v0.1.0 (fixed in 0.1.1) and v0.2.0 (fixed in 0.2.1) |
+| `docs/PLAN_v0.1.md` to `docs/PLAN_v0.4.md` | Detailed implementation plans for v0.1 to v0.4 |
+| `docs/REVIEW_v0.1.md` to `docs/REVIEW_v0.3.md` | Reviews of v0.1.0 (fixed in 0.1.1), v0.2.0 (fixed in 0.2.1) and v0.3.0 (fixed in 0.3.1) |
 | `docs/PROPOSAL.md` | The original proposal and the answers that shaped it |
 | `CHANGELOG.md` | What each version shipped |
 | `CLAUDE.md` | Working rules for LLM sessions in this repository |

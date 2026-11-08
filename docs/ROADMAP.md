@@ -45,11 +45,13 @@ reservoir sampling and bar folding to L-11 points; table view and CSV of
 the plotted data; CLI `plot` (CSV or JSON; no HTML, see the open options).
 F-PLOT-01..03, F-UI-03, F-CLI-04.
 
-## v0.3.1 Review fixes (planned, Phase 0 of the v0.4 plan)
+## v0.3.1 Review fixes (done, 2026-11-08: Phase 0 of `docs/PLAN_v0.4.md`, result in `CHANGELOG.md` 0.3.1)
 
-The confirmed findings of `docs/REVIEW_v0.3.md`.
+The confirmed findings of `docs/REVIEW_v0.3.md`: one temp folder per file per process (two spilling
+DuckDB instances crashed the process), bucket width above the ladder, at most 8 y columns, and the
+smaller items.
 
-## v0.4 Cross-database (planned: `docs/PLAN_v0.4.md`)
+## v0.4 Cross-database (done, 2026-11-08: `docs/PLAN_v0.4.md`, result in `CHANGELOG.md` 0.4.0)
 
 A sandboxed in-memory fleet connection with the chosen databases attached
 read-only and one union view per table (`database` column); a scope
