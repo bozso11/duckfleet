@@ -166,6 +166,27 @@ _SQL_EXCEPTIONS = (
 )
 
 
+def _writes_to_a_view(exc: BaseException, lower: str) -> bool:
+    """DuckDB's own refusal of INSERT, UPDATE or DELETE on a view (the union views of a fleet).
+
+    Matched on the exception type and DuckDB's fixed wording at the start (or end) of the message,
+    which user text cannot produce.
+    """
+    if isinstance(exc, duckdb.BinderException):
+        return lower.startswith(
+            (
+                "binder error: can only update base table",
+                "binder error: can only delete from base table",
+                "binder error: can only insert into base table",
+            )
+        )
+    if isinstance(exc, duckdb.CatalogException):
+        return lower.startswith("catalog error: ") and lower.endswith(
+            ("is not an table", "is not a table")
+        )
+    return False
+
+
 def classify_error(exc: BaseException) -> QueryError:
     """Map an exception raised while running a query to a ``QueryError``."""
     if isinstance(exc, QueryError):
@@ -182,6 +203,8 @@ def classify_error(exc: BaseException) -> QueryError:
         kind = "timeout"
     elif isinstance(exc, duckdb.PermissionException):
         kind = "blocked"
+    elif _writes_to_a_view(exc, lower):
+        kind = "read_only"  # a fleet's union views are read-only by nature (D-044)
     elif isinstance(exc, duckdb.InvalidInputException):
         if any(s in lower for s in _MISSING):
             kind = "other"  # opening a missing file also mentions read-only mode
@@ -316,42 +339,36 @@ def run_query(
 # ---------------------------------------------------------------- export_query
 
 
-def export_query(
-    db_path: str | Path,
-    sql: str,
-    fmt: Literal["csv", "parquet"],
-    config: QueryConfig,
-    *,
-    max_rows: int | None = None,
-) -> tuple[bytes, int, bool]:
-    """Run ``sql`` and return ``(file bytes, rows written, truncated)``.
-
-    Built in memory through Arrow, cut at ``max_rows`` (default
-    ``config.max_download_rows``). The SQL text is not modified; the cap is a
-    ``LIMIT`` on the relation. Needs ``pyarrow`` (extra ``export``).
-    """
+def require_export_format(fmt: str) -> None:
+    """Raise ``ValueError`` for an unknown format and ``MissingDependencyError`` without pyarrow."""
     if fmt not in ("csv", "parquet"):
         raise ValueError(f"unknown export format: {fmt!r}")
     try:
-        import pyarrow.csv as pa_csv
-        import pyarrow.parquet as pa_parquet
+        import pyarrow  # noqa: F401
     except ImportError as exc:
         raise MissingDependencyError(
             "exporting needs pyarrow: install it with: pip install 'duckfleet-core[export]'"
         ) from exc
 
-    cap = config.max_download_rows if max_rows is None else max_rows
-    with as_query_errors(), open_readonly(db_path, config) as con:
 
-        def work() -> Any:
-            relation = con.sql(sql)
-            if relation is None:
-                raise QueryError("sql", "the statement returns no rows")
-            limited = relation.limit(cap + 1)
-            to_table = getattr(limited, "to_arrow_table", None) or limited.fetch_arrow_table
-            return to_table()
+def fetch_arrow(con: duckdb.DuckDBPyConnection, sql: str, cap: int, timeout_s: float) -> Any:
+    """The result of ``sql`` as an Arrow table of at most ``cap + 1`` rows, under the timeout."""
 
-        table = _with_timeout(con, work, config.timeout_s)
+    def work() -> Any:
+        relation = con.sql(sql)
+        if relation is None:
+            raise QueryError("sql", "the statement returns no rows")
+        limited = relation.limit(cap + 1)
+        to_table = getattr(limited, "to_arrow_table", None) or limited.fetch_arrow_table
+        return to_table()
+
+    return _with_timeout(con, work, timeout_s)
+
+
+def write_arrow(table: Any, fmt: str, cap: int) -> tuple[bytes, int, bool]:
+    """``(file bytes, rows written, truncated)`` of an Arrow table cut at ``cap`` rows."""
+    import pyarrow.csv as pa_csv
+    import pyarrow.parquet as pa_parquet
 
     truncated = table.num_rows > cap
     if truncated:
@@ -366,6 +383,27 @@ def export_query(
         hint = "; download Parquet instead" if fmt == "csv" else ""
         raise QueryError("other", f"cannot write the result as {fmt}: {exc}{hint}") from exc
     return buffer.getvalue(), table.num_rows, truncated
+
+
+def export_query(
+    db_path: str | Path,
+    sql: str,
+    fmt: Literal["csv", "parquet"],
+    config: QueryConfig,
+    *,
+    max_rows: int | None = None,
+) -> tuple[bytes, int, bool]:
+    """Run ``sql`` and return ``(file bytes, rows written, truncated)``.
+
+    Built in memory through Arrow, cut at ``max_rows`` (default
+    ``config.max_download_rows``). The SQL text is not modified; the cap is a
+    ``LIMIT`` on the relation. Needs ``pyarrow`` (extra ``export``).
+    """
+    require_export_format(fmt)
+    cap = config.max_download_rows if max_rows is None else max_rows
+    with as_query_errors(), open_readonly(db_path, config) as con:
+        table = fetch_arrow(con, sql, cap, config.timeout_s)
+    return write_arrow(table, fmt, cap)
 
 
 # ---------------------------------------------------------------- tables and previews

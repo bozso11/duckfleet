@@ -2,7 +2,28 @@
 
 ## Unreleased
 
-(Work towards 0.4.0; see `docs/PLAN_v0.4.md`. Nothing yet.)
+Work towards 0.4.0 (`docs/PLAN_v0.4.md`). The acceptance checklist is ticked in the
+0.4.0 entry.
+
+### Phase 1: fleet connection
+
+1. `duckfleet_core.fleet`: `FleetSelection` (1 to 50 distinct rel_paths, `aliases()`),
+   `open_fleet` (an in-memory DuckDB, the members attached read-only, then external
+   access off and the configuration locked, then one union view per table name with a
+   `database` column), `fleet_tables`, `run_fleet_query`, `export_fleet_query`. A member
+   that cannot be attached is an `AttachFailure` (locked, encrypted, corrupt, missing, ...)
+   and the others still work. Every fleet connection has its own temp folder
+   `<cache>/tmp/<pid>/fleet-<8 hex>`, removed when it closes.
+2. `UNION ALL BY NAME` does not fail when the view is created, whatever the column
+   types: it fails when rows are read (`Unimplemented type for cast`), which neither
+   `LIMIT 0` nor a probe with NULL constants shows. A column whose types differ across the
+   members and are not all numeric or all temporal is therefore cast to VARCHAR up front
+   (`UnionView.casts`); the plan's retry on a `BinderException` stays as a safety net (D-044).
+3. A member table with its own `database` column breaks the union binder (duplicate
+   names), so that view labels with `duckfleet_database` (`UnionView.label_column`, D-044).
+4. `query.classify_error`: an INSERT, UPDATE or DELETE on a view (the union views of a
+   fleet) is `read_only`; `execute_limited` and `export_query` are split into reusable parts
+   (`fetch_arrow`, `write_arrow`, `require_export_format`).
 
 ## 0.3.1 (2026-11-08)
 
@@ -79,7 +100,8 @@ with a latin-1 stdout; a guard that no test touches the real cache.
 
 1. `PROFILE_SCHEMA_VERSION` is unchanged in 0.3.1, so a rescan reuses all profiles.
 2. 660 tests (585 in 0.3.0) and `ruff check .` clean on Windows (Python 3.11.9, duckdb
-   1.5.6, streamlit 1.66.1); CI on both OSes is recorded in the next entry.
+   1.5.6, streamlit 1.66.1). CI: commit `7f51bc7` was green on `ubuntu-latest` and
+   `windows-latest` (run 42462230265).
 
 ## 0.3.0 (2026-11-08)
 

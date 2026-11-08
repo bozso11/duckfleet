@@ -174,3 +174,15 @@ Last updated: 2026-11-08 (0.3.1).
     and the notes of `duckfleet plot` go to stderr in the console encoding, so
     non-ASCII identifiers can print as `?`; set `PYTHONUTF8=1` to see them. The
     data on stdout (`--format csv` or `json`) is always UTF-8 (item 26).
+34. **Fleet connection (0.4).** Up to 50 databases are attached read-only to one in-memory
+    connection (L-12, L-22); a member that cannot be attached (locked, encrypted, corrupt,
+    missing) is reported and the others work, and no member at all is an error. The union
+    view of a table holds the rows of every member that has the table; a column missing in a
+    member is NULL there. A column whose type differs across the members and is not numeric
+    in all of them or temporal in all of them is shown as text (`UnionView.casts`), and a
+    member table with a column named `database` makes that view label with
+    `duckfleet_database`. The union views and the aliases are the only schema the SQL sees
+    beyond `CREATE TEMP TABLE`; `ATTACH`, `COPY TO`, `read_csv`, `INSTALL`, `LOAD` and `SET`
+    are refused as `blocked`, writes as `read_only`. Each request opens and closes its own
+    connection with its own temp folder, so the attach cost (about 0.01 s for 8 files) is
+    paid per query.
