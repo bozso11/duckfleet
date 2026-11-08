@@ -26,6 +26,7 @@ DATABASE_COLUMNS = [
 ]  # fmt: skip
 FAMILY_COLUMNS = ["family_id", "n_members", "n_tables", "tables", "members"]
 VARIANT_COLUMNS = ["table", "n_variants", "fp_strict", "n_members", "n_columns", "columns"]
+CONTENT_COLUMNS = ["table", "n_members", "row_count", "content_hash", "members"]
 TIMELINE_COLUMNS = ["rel_path", "family_strict", "time_min", "time_max"]
 PROBLEM_COLUMNS = ["rel_path", "status", "error_type", "health", "message"]
 TABLE_COLUMNS = [
@@ -171,6 +172,16 @@ def table_variants(catalog_path: str, catalog_mtime_ns: int) -> pd.DataFrame:
         row["n_variants"] = variants_per_table[(row["schema_name"], row["table_name"])]
         row["columns"] = ", ".join(f"{name} {data_type}" for name, data_type in row["columns"])
     return _frame(rows, VARIANT_COLUMNS)
+
+
+@st.cache_data(show_spinner=False)
+def content_variants(catalog_path: str, catalog_mtime_ns: int) -> pd.DataFrame:
+    """One row per distinct content of a small table (``CatalogReader.content_variants``)."""
+    rows = CatalogReader(catalog_path).content_variants()
+    for row in rows:
+        row["table"] = f"{row['schema_name']}.{row['table_name']}"
+        row["members"] = ", ".join(row["members"])
+    return _frame(rows, CONTENT_COLUMNS)
 
 
 @st.cache_data(show_spinner=False)

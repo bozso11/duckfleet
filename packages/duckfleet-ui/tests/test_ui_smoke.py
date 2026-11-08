@@ -67,6 +67,7 @@ def test_overview_renders_every_section(pointed_at) -> None:
         "Fleet",
         "Schema families",
         "Table variants",
+        "Identical content",
         "Compare",
         "Time windows",
         "Health and errors",
@@ -74,7 +75,7 @@ def test_overview_renders_every_section(pointed_at) -> None:
     ]
     assert at.sidebar.button[0].label == "Scan"
     assert [b.label for b in at.sidebar.button] == ["Scan", "Load existing catalog"]
-    assert len(at.dataframe) >= 8  # fleet, families, matrix, variants, 3 diff tables, ...
+    assert len(at.dataframe) >= 9  # fleet, families, matrix, variants, identical, 3 diff, ...
 
 
 def test_sidebar_defaults(pointed_at) -> None:
@@ -284,3 +285,25 @@ def test_the_overview_lists_single_instant_databases(
     captions = " ".join(str(c.value) for c in at.caption)
     assert "Single-instant windows are drawn with a minimum width: one/single.duckdb" in captions
     assert len(at.get("plotly_chart")) == 1
+
+
+def test_overview_shows_identical_content_of_small_tables(pointed_at) -> None:
+    """Plan v0.4 Phase 2: ``config`` is the same in all 8 databases; no two ``events`` are."""
+    at = run_app()
+    assert not at.exception, [e.value for e in at.exception]
+    summaries = [d.value for d in at.dataframe if "databases per variant" in list(d.value.columns)]
+    assert len(summaries) == 1
+    rows = {row["table"]: row for _i, row in summaries[0].iterrows()}
+    assert rows["main.config"]["variants"] == 1
+    assert rows["main.config"]["databases per variant"] == "8"
+    assert rows["main.config"]["identical in"] == "8 of 8"
+    assert rows["main.notes"]["databases per variant"] == "2"
+    assert rows["main.events"]["variants"] == 8 and rows["main.events"]["identical in"] == "no two"
+    group_columns = ["table", "n_members", "row_count", "members"]
+    groups = next(d.value for d in at.dataframe if list(d.value.columns) == group_columns)
+    config = groups[groups["table"] == "main.config"]
+    assert (
+        list(config["n_members"]) == [8]
+        and "exp_03/run_02/metrics.duckdb" in config["members"].iloc[0]
+    )
+    assert "Databases with identical content" in [e.label for e in at.expander]

@@ -401,6 +401,35 @@ def _run_aggregates(
     return dict(zip(keys, row, strict=True))
 
 
+EMPTY_HASH = "empty"
+
+
+def _content_hash(
+    con: duckdb.DuckDBPyConnection, qualified: str, row_count: int | None, config: ScanConfig
+) -> str | None:
+    """md5 of the rows of a small base table, as sorted text (plan v0.4 Section 3.3, D-041).
+
+    ``None`` above ``content_hash_rows`` rows, for a table whose rows cannot be cast to text
+    and when the feature is off (0); ``"empty"`` for an empty table. The hash depends on the
+    column names, their order and types as DuckDB prints them, and the values. The row alias
+    is unusual on purpose: with a plain ``t`` a column named ``t`` would win the reference.
+    """
+    # TUNING(content-hash)
+    if config.content_hash_rows <= 0 or row_count is None or row_count > config.content_hash_rows:
+        return None
+    if row_count == 0:
+        return EMPTY_HASH
+    try:
+        row = con.execute(
+            'SELECT md5(string_agg("df_row"::VARCHAR, chr(10) ORDER BY "df_row"::VARCHAR)) '
+            f'FROM {qualified} AS "df_row"'
+        ).fetchone()
+    except Exception as exc:  # an exotic type or too little memory: no hash, not a table error
+        logger.debug("no content hash for %s: %s", qualified, exc)
+        return None
+    return str(row[0]) if row and row[0] is not None else None
+
+
 def _profile_table(
     con: duckdb.DuckDBPyConnection, db_name: str, item: _TableWork, config: ScanConfig
 ) -> _TableResult:
@@ -411,11 +440,14 @@ def _profile_table(
     t_min: datetime | None = None
     t_max: datetime | None = None
     stats: dict[int, ColumnStats] = {}
+    content_hash: str | None = None
 
     try:
         if item.kind == "table" or config.count_view_rows:
             row = con.execute(f"SELECT count(*) FROM {qualified}").fetchone()
             row_count = int(row[0]) if row else None
+        if item.kind == "table":
+            content_hash = _content_hash(con, qualified, row_count, config)
         if item.kind == "table" and columns:
             stats, t_min, t_max, error = _table_stats(con, qualified, columns, row_count, config)
     except Exception as exc:
@@ -438,6 +470,7 @@ def _profile_table(
         time_min=t_min.isoformat() if t_min else None,
         time_max=t_max.isoformat() if t_max else None,
         error=error,
+        content_hash=content_hash,
     )
     return _TableResult(table, t_min, t_max)
 

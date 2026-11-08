@@ -58,7 +58,7 @@ CREATE TABLE tables (
     rel_path VARCHAR, schema_name VARCHAR, table_name VARCHAR, kind VARCHAR,
     n_columns INTEGER, row_count BIGINT, estimated_size BIGINT,
     fp_strict VARCHAR, fp_loose VARCHAR, time_min TIMESTAMP, time_max TIMESTAMP,
-    error VARCHAR
+    error VARCHAR, content_hash VARCHAR
 );
 CREATE TABLE columns (
     rel_path VARCHAR, schema_name VARCHAR, table_name VARCHAR, ordinal INTEGER,
@@ -174,7 +174,7 @@ def build_catalog(
                 [
                     p.rel_path, t.schema_name, t.name, t.kind, len(t.columns), t.row_count,
                     t.estimated_size, t.fp_strict, t.fp_loose, _dt(t.time_min), _dt(t.time_max),
-                    t.error,
+                    t.error, t.content_hash,
                 ]
             )  # fmt: skip
             for c in t.columns:
@@ -362,6 +362,23 @@ class CatalogReader:
         for row in rows:
             row["columns"] = json.loads(row.pop("canonical_json"))
         return rows
+
+    def content_variants(self) -> list[dict[str, Any]]:
+        """Per table with a content hash: its distinct hashes (plan v0.4 Section 3.3).
+
+        One row per ``(schema_name, table_name, content_hash)`` with ``n_members``, the sorted
+        ``members`` (rel_paths) and the largest ``row_count``; ordered by table, then by
+        ``n_members`` descending, then by hash. ``content_hash`` is ``"empty"`` for empty tables.
+        """
+        return self._rows(
+            "SELECT schema_name, table_name, content_hash, "
+            "count(DISTINCT rel_path) AS n_members, "
+            "list(DISTINCT rel_path ORDER BY rel_path) AS members, "
+            "max(row_count) AS row_count "
+            "FROM tables WHERE content_hash IS NOT NULL AND kind = 'table' "
+            "GROUP BY schema_name, table_name, content_hash "
+            "ORDER BY schema_name, table_name, n_members DESC, content_hash"
+        )
 
     def timeline(self) -> list[dict[str, Any]]:
         return self._rows(

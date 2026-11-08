@@ -101,6 +101,29 @@ def _variants(reader: CatalogReader) -> list[Line]:
     return lines
 
 
+def _identical_tables(reader: CatalogReader) -> list[Line]:
+    """Per table with a content hash: how many different contents, and the largest group."""
+    grouped: dict[tuple[str, str], list[dict[str, Any]]] = {}
+    for variant in reader.content_variants():
+        grouped.setdefault((variant["schema_name"], variant["table_name"]), []).append(variant)
+    lines: list[Line] = []
+    for (schema, table), items in grouped.items():
+        databases = sum(v["n_members"] for v in items)
+        largest = max(v["n_members"] for v in items)
+        text = (
+            f"{schema}.{table}: {_plural(len(items), 'content variant')} "
+            f"over {_plural(databases, 'database')}"
+        )
+        if databases > 1:
+            text += (
+                f", largest group {_plural(largest, 'database')}"
+                if largest > 1
+                else ", no two are identical"
+            )
+        lines.append((0, text))
+    return lines or [(0, "none")]
+
+
 def _time_windows(reader: CatalogReader, databases: list[dict[str, Any]]) -> list[Line]:
     timeline = reader.timeline()
     family = {d["rel_path"]: d["family_strict"] for d in databases}
@@ -144,6 +167,7 @@ def build_sections(reader: CatalogReader) -> list[Section]:
         (f"Strict schema families ({strict_n})", _families(reader, "strict")),
         (f"Loose schema families ({loose_n})", _families(reader, "loose")),
         ("Table variants", _variants(reader)),
+        ("Identical small tables", _identical_tables(reader)),
         ("Time windows (sorted by start)", _time_windows(reader, databases)),
         ("Health flags", _health(reader)),
         ("Errors", _errors(reader)),

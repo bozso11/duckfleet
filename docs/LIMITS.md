@@ -15,7 +15,7 @@ Last updated: 2026-11-08 (0.3.1).
 | L-04 | Memory limit per worker | `min(2048 MB, total_ram / 2 / workers)`, floor 256 MB (TBC) | `ScanConfig.worker_memory_limit_mb` | DuckDB spills or fails the query; the file is recorded as error | v0.1 |
 | L-05 | Full column stats | tables up to 20 M rows (TBC) | `ScanConfig.stats_row_threshold` | non-temporal stats on a sample, `sampled=True` | v0.1 |
 | L-06 | Sample size above L-05 | 1 M rows (TBC) | `ScanConfig.stats_sample_rows` | | v0.1 |
-| L-07 | Content fingerprint | tables up to 10 k rows (TBC) | | skipped | v0.4 |
+| L-07 | Content fingerprint | tables up to 10 k rows (TBC) | `ScanConfig.content_hash_rows` (0 = off) | no hash for a larger table, a view or a table whose rows cannot be cast to text; a changed option needs `--full` (item 15) | v0.4 |
 | L-08 | Data preview page | 1,000 rows (TBC) | `QueryConfig.preview_rows` | paging; the page number input is bounded by the catalog's row count | v0.2 |
 | L-09 | SQL result in grid / download | 10 k rows shown (page option 1 to 100 k), 1 M rows download (TBC) | `QueryConfig.max_rows`, `max_download_rows` | grid truncated with a notice; download cut at the cap with a warning (D-023) | v0.2 |
 | L-10 | Worker crash | n/a | | a crashed pool marks the unfinished files `worker_crashed`; rerun the scan | v0.1 |
@@ -186,3 +186,10 @@ Last updated: 2026-11-08 (0.3.1).
     are refused as `blocked`, writes as `read_only`. Each request opens and closes its own
     connection with its own temp folder, so the attach cost (about 0.01 s for 8 files) is
     paid per query.
+35. **Content hashes (0.4).** Tables of up to 10,000 rows are hashed as the sorted rows
+    printed by DuckDB, so two tables are identical when their column names, the order of
+    the columns and the printed values agree; a type counts only through its printed form
+    (INTEGER 1 and VARCHAR '1' print alike, INTEGER 1 and DOUBLE 1.0 do not). The row order
+    does not matter, duplicate rows do. An empty table is `empty` whatever its columns. The
+    upgrade to 0.4 re-profiles every file once (profile schema version 2).
+

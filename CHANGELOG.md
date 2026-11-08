@@ -5,7 +5,24 @@
 Work towards 0.4.0 (`docs/PLAN_v0.4.md`). The acceptance checklist is ticked in the
 0.4.0 entry.
 
+### Phase 2: content hash
+
+1. **Profile schema version 2: the next scan after upgrading re-profiles every file once.**
+   `TableProfile.content_hash` holds `md5(string_agg(row::VARCHAR, chr(10) ORDER BY row::VARCHAR))`
+   for base tables of up to `ScanConfig.content_hash_rows` rows (L-07, default 10,000; 0 turns it
+   off), `"empty"` for an empty table, nothing for a larger table, a view or a table whose rows
+   cannot be hashed (that is not a table error). The catalog has `tables.content_hash` and
+   `CatalogReader.content_variants()`.
+2. `duckfleet report` has the section **Identical small tables** (per table: content variants and
+   the largest group); the Overview page has the section **Identical content** after Table
+   variants. On the demo fleet `config` is the same in all 8 databases, `notes` in both exp_03 runs,
+   and no two `events` tables are alike.
+3. The hash depends on the column names, their order and the values as DuckDB prints them; a type
+   matters only through its printed form (INTEGER 1 and VARCHAR '1' print alike; D-045).
+
 ### Phase 1: fleet connection
+
+CI: commit `b9753d9` was green on both OSes (run 42463125448).
 
 1. `duckfleet_core.fleet`: `FleetSelection` (1 to 50 distinct rel_paths, `aliases()`),
    `open_fleet` (an in-memory DuckDB, the members attached read-only, then external

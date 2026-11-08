@@ -251,6 +251,53 @@ def _variants(path: str, mtime: int) -> None:
     )
 
 
+def content_summary(variants: pd.DataFrame) -> pd.DataFrame:
+    """One row per table: its content variants, databases and the size of each group."""
+    rows = []
+    for table, group in variants.groupby("table", sort=True):
+        sizes = sorted(group["n_members"].astype(int), reverse=True)
+        rows.append(
+            {
+                "table": table,
+                "variants": len(sizes),
+                "databases": sum(sizes),
+                "databases per variant": " + ".join(str(n) for n in sizes),
+                "identical in": f"{sizes[0]} of {sum(sizes)}" if sizes[0] > 1 else "no two",
+            }
+        )
+    return pd.DataFrame(
+        rows, columns=["table", "variants", "databases", "databases per variant", "identical in"]
+    )
+
+
+def _identical(path: str, mtime: int) -> None:
+    st.subheader("Identical content")
+    st.caption(
+        "Small tables (up to 10,000 rows) are compared by their content: the sorted rows, "
+        "with the column names. One variant means the table holds the same data in every "
+        "database that has it."
+    )
+    variants = access.content_variants(path, mtime)
+    if variants.empty:
+        st.info("No table was compared. Scan again if the catalog is older than 0.4.")
+        return
+    st.dataframe(content_summary(variants), hide_index=True, width="stretch")
+    groups = variants[variants["n_members"] > 1]
+    with st.expander("Databases with identical content"):
+        if groups.empty:
+            st.write("No two databases hold the same content of a table.")
+        else:
+            st.dataframe(
+                groups[["table", "n_members", "row_count", "members"]],
+                hide_index=True,
+                width="stretch",
+                column_config={
+                    "n_members": st.column_config.NumberColumn("databases"),
+                    "row_count": st.column_config.NumberColumn("rows"),
+                },
+            )
+
+
 def _diff_choices(path: str, mtime: int, dbs: pd.DataFrame) -> dict[str, str]:
     """Label -> rel_path; a family stands for its first member."""
     choices: dict[str, str] = {}
@@ -436,6 +483,7 @@ def render() -> None:
     _fleet_table(dbs)
     _families(path, mtime)
     _variants(path, mtime)
+    _identical(path, mtime)
     _diff(path, mtime, dbs)
     _timeline(path, mtime, dbs)
     _problems(path, mtime)

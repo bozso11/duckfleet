@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 from duckfleet_core.config import ScanConfig
 from duckfleet_core.discovery import RejectedFile
 
-PROFILE_SCHEMA_VERSION = 1
+PROFILE_SCHEMA_VERSION = 2  # 2: TableProfile.content_hash (v0.4)
 
 ErrorType = Literal[
     "locked",
@@ -61,6 +61,9 @@ class TableProfile(BaseModel):
     time_min: str | None = None  # min over temporal columns' mins
     time_max: str | None = None
     error: str | None = None  # per-table failure, table still listed
+    # md5 of the sorted rows as text for base tables up to content_hash_rows rows, "empty" for an
+    # empty table, None for a larger table, a view or a table whose rows cannot be hashed (D-041)
+    content_hash: str | None = None
 
 
 class ProfileError(BaseModel):

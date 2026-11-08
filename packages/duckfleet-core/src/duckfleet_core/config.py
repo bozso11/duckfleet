@@ -34,6 +34,9 @@ class ScanConfig(BaseModel):
     worker_memory_limit_mb: int | None = None  # L-04
     stats_row_threshold: int = 20_000_000  # L-05, TUNING(stats-threshold)
     stats_sample_rows: int = 1_000_000  # L-06, TUNING(stats-threshold)
+    # Tables up to this many rows get a content hash (L-07, TUNING(content-hash)); 0 turns the
+    # hash off, an empty table is hashed as "empty" otherwise.
+    content_hash_rows: int = Field(default=10_000, ge=0)
     include_views_in_fingerprint: bool = False  # TUNING(views-in-fingerprint)
     count_view_rows: bool = False
     tag_patterns: list[str] = Field(default_factory=lambda: list(DEFAULT_TAG_PATTERNS))

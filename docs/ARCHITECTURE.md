@@ -157,7 +157,7 @@ CREATE TABLE tables (
     rel_path VARCHAR, schema_name VARCHAR, table_name VARCHAR, kind VARCHAR,
     n_columns INTEGER, row_count BIGINT, estimated_size BIGINT,
     fp_strict VARCHAR, fp_loose VARCHAR, time_min TIMESTAMP, time_max TIMESTAMP,
-    error VARCHAR
+    error VARCHAR, content_hash VARCHAR
 );
 CREATE TABLE columns (
     rel_path VARCHAR, schema_name VARCHAR, table_name VARCHAR, ordinal INTEGER,
@@ -194,7 +194,7 @@ Rules:
    it in `finally`; an open handle would block the next scan's `os.replace`
    on Windows. Methods: `scan_run`, `databases`, `tables`, `columns`,
    `families`, `family_members`, `family_table_matrix`, `table_variants`,
-   `timeline`, `health`, `rejected`, `diff`, `df` (pandas, UI only).
+   `content_variants`, `timeline`, `health`, `rejected`, `diff`, `df` (pandas, UI only).
 
 ## 6. Concurrency and locking rules
 
