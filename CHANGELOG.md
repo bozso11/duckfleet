@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-Nothing yet.
+1. `docs/REVIEW_v0.2.md`: review of 0.2.0 against the plan (accepted; 12
+   confirmed defects, one a rule violation, to ship as 0.2.1).
+2. `docs/PLAN_v0.3.md`: detailed plan for 0.2.1 (Phase 0) and v0.3 (Plot
+   page, `duckfleet plot`, chart rules).
+3. Decisions D-031 to D-034; limits L-18 to L-21 added.
 
 ## 0.2.0 (2026-11-06)
 

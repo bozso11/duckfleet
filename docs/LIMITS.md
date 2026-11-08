@@ -26,6 +26,10 @@ Last updated: 2026-11-06 (0.2.0).
 | L-15 | Preview columns shown by default | 50 (TBC) | `QueryConfig.preview_max_columns` | the rest selectable in the multiselect | v0.2 |
 | L-16 | Per-column summary (`SUMMARIZE`) | exact up to L-05 rows, sampled above with L-06 rows | `QueryConfig.stats_row_threshold`, `stats_sample_rows` | `sampled=True` in the summary caption | v0.2 |
 | L-17 | Query connection threads and memory | `min(4, cpu_count)` threads, `min(4 GB, RAM/4)` memory, floor 512 MB (TBC) | `QueryConfig.threads`, `memory_limit_mb`, env `DUCKFLEET_QUERY_THREADS`, `DUCKFLEET_QUERY_MEMORY_MB` | resolved once per process (D-021); DuckDB spills or fails the query at the memory limit | v0.2 |
+| L-18 | Bar chart categories | 200 (TBC) | `PlotSpec.max_categories` | the rest summed into `(other)`, said in the caption | v0.3 |
+| L-19 | Plot series (colour values) | 8 for line, histogram, bar; 3 for scatter (TBC) | `PlotSpec.max_series` | the top series by row count kept, the rest folded into one grey `(other)` series (D-032) | v0.3 |
+| L-20 | Histogram bins | 50, range 5 to 500 (TBC) | `PlotSpec.bins` | rejected outside the range | v0.3 |
+| L-21 | Plot point budget (page option) | 50,000, range 100 to 500,000 (TBC); same as L-11 | `PlotSpec.max_points` | bucketing, sampling or folding reduces the data in DuckDB until it fits; the plot queries run under L-14 | v0.3 |
 
 ## Known limitations without a number
 

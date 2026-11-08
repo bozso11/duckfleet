@@ -28,11 +28,21 @@ sortable preview, read-only sandboxed SQL page with result grid, timeout,
 CSV/Parquet download and query history; CLI `sql`, `summarize`, `preview`.
 F-DB-01..05, F-UI-02, F-UI-04.
 
-## v0.3 Visualisation
+## v0.2.1 Review fixes (planned, Phase 0 of the v0.3 plan)
 
-Plot page: pick table, x column (temporal first), several y columns, colour
-or group-by, optional SQL filter; line, scatter, histogram, bar; DuckDB-side
-time bucketing and downsampling to L-11 points. F-PLOT-01..03, F-UI-03.
+The confirmed findings of `docs/REVIEW_v0.2.md`: DuckDB's temp directory
+moved from beside the scanned file into the cache, timeout classification
+during a fetch, UTF-8 CLI output, Ctrl-C, the stale preview cache, and the
+smaller items.
+
+## v0.3 Visualisation (planned: `docs/PLAN_v0.3.md`)
+
+Plot page: pick table, chart kind (line, scatter, histogram, bar), x column
+(temporal first, numeric, or row order), several y columns on one axis or
+one panel each, colour column with a series cap, optional SQL filter;
+DuckDB-side time bucketing (mean with min to max band), numeric bins,
+reservoir sampling and bar folding to L-11 points; table view and CSV of
+the plotted data; CLI `plot` with optional HTML. F-PLOT-01..03, F-UI-03.
 
 ## v0.4 Cross-database
 
