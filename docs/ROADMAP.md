@@ -45,11 +45,19 @@ reservoir sampling and bar folding to L-11 points; table view and CSV of
 the plotted data; CLI `plot` (CSV or JSON; no HTML, see the open options).
 F-PLOT-01..03, F-UI-03, F-CLI-04.
 
-## v0.4 Cross-database
+## v0.3.1 Review fixes (planned, Phase 0 of the v0.4 plan)
 
-Attach a chosen subset read-only; same table across files as one result
-with a `database` column; overlay plots across files; content fingerprint
-of small tables. F-X-01..02, F-PLOT-04, F-FLEET-08.
+The confirmed findings of `docs/REVIEW_v0.3.md`.
+
+## v0.4 Cross-database (planned: `docs/PLAN_v0.4.md`)
+
+A sandboxed in-memory fleet connection with the chosen databases attached
+read-only and one union view per table (`database` column); a scope
+control on the SQL and Plot pages (one database or several, defaulting to
+the strict family); plots coloured by `database`; content fingerprints of
+small tables in the scan with an "Identical content" section; CLI
+`fleet-tables`, `fleet-sql`, `plot --databases/--family`. F-X-01..02,
+F-PLOT-04, F-FLEET-08.
 
 ## Open options (not scheduled)
 

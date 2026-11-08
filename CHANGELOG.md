@@ -2,7 +2,11 @@
 
 ## Unreleased
 
-Nothing yet.
+1. `docs/REVIEW_v0.3.md`: review of 0.3.0 against the plan.
+2. `docs/PLAN_v0.4.md`: detailed plan for 0.3.1 (Phase 0) and v0.4 (fleet
+   connection, scope on the SQL and Plot pages, content fingerprints, CLI
+   `fleet-tables`, `fleet-sql`).
+3. Decisions D-040 to D-042; limit L-22 added.
 
 ## 0.3.0 (2026-11-08)
 

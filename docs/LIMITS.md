@@ -30,6 +30,7 @@ Last updated: 2026-11-08 (0.3.0).
 | L-19 | Plot series (colour values) | 8 for line, histogram, bar; 3 for scatter (TBC) | `PlotSpec.max_series` | the top series by row count kept, the rest folded into one grey `(other)` series (D-032) | v0.3 |
 | L-20 | Histogram bins | 50, range 5 to 500 (TBC) | `PlotSpec.bins` | rejected outside the range | v0.3 |
 | L-21 | Plot point budget (page option) | 50,000, range 100 to 500,000 (TBC); same as L-11 | `PlotSpec.max_points` | bucketing, sampling or folding reduces the data in DuckDB until it fits; the plot queries run under L-14 | v0.3 |
+| L-22 | Databases in one fleet connection (SQL and Plot scope, CLI `--databases`, `--family`, `--all`) | 50, same as L-12 | `FleetSelection` | a larger family is cut to the first 50 by rel_path with a caption; the CLI refuses more as a usage error | v0.4 |
 
 ## Known limitations without a number
 
