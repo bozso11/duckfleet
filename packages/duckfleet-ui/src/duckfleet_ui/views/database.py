@@ -14,32 +14,15 @@ from typing import Any
 import pandas as pd
 import streamlit as st
 
+from duckfleet_core.plotdata import ROW_ORDER
+from duckfleet_core.profiler import is_numeric_type, is_temporal_type
 from duckfleet_core.query import QueryError
 from duckfleet_core.sqlutil import qualified_name
 from duckfleet_ui import catalog_access as access
 from duckfleet_ui import common
 from duckfleet_ui import query_access as queries
 
-MISSING = "missing"
-CHANGED = "changed"
-CURRENT = "current"
-
-
 # ---------------------------------------------------------------- helpers
-
-
-def _file_state(info: dict[str, Any]) -> tuple[str, tuple[int, int] | None]:
-    """``(state, live (size, mtime_ns))``: ``missing``, ``changed`` (differs from the scan) or
-    ``current``. The live values key the preview cache (V-05), not the catalog row's.
-    """
-    try:
-        stat = Path(info["abs_path"]).stat()
-    except OSError:
-        return MISSING, None
-    live = (stat.st_size, stat.st_mtime_ns)
-    if live != (info["size_bytes"], info["mtime_ns"]):
-        return CHANGED, live
-    return CURRENT, live
 
 
 def _header(info: dict[str, Any], state: str) -> None:
@@ -56,7 +39,7 @@ def _header(info: dict[str, Any], state: str) -> None:
         st.caption("Tags: " + ", ".join(f"{k}={v}" for k, v in info["tags"].items()))
     if info["health"]:
         st.caption("Health: " + ", ".join(info["health"]))
-    if state == CHANGED:
+    if state == common.CHANGED:
         st.caption(
             "Changed since the last scan: row counts and statistics below come from the scan."
         )
@@ -80,6 +63,30 @@ def _tables_table(tables: pd.DataFrame) -> None:
 
 def _show_error(error: QueryError) -> None:
     st.error(f"{error.kind}: {error.message}")
+
+
+# ---------------------------------------------------------------- plot hand-off
+
+
+def _plot_prefill(rel_path: str, table_label: str, columns: pd.DataFrame) -> dict[str, Any]:
+    """What the Plot page preselects: x is the first temporal column (else the row order), y the
+    first numeric column.
+    """
+    types = dict(zip(columns["column_name"], columns["data_type"], strict=True))
+    temporal = [name for name, data_type in types.items() if is_temporal_type(data_type)]
+    numeric = [name for name, data_type in types.items() if is_numeric_type(data_type)]
+    return {
+        "rel_path": rel_path,
+        "table": table_label,
+        "x": temporal[0] if temporal else ROW_ORDER,
+        "y": numeric[0] if numeric else None,
+    }
+
+
+def _prepare_plot(prefill: dict[str, Any]) -> None:
+    """Button callback (runs before the rerun, so widget state may still be set)."""
+    st.session_state["selected_table"] = prefill["table"]
+    st.session_state["plot_prefill"] = prefill
 
 
 # ---------------------------------------------------------------- tabs
@@ -229,7 +236,7 @@ def render() -> None:
     if not info:
         st.warning(f"{rel_path} is not in the catalog any more. Scan again.")
         return
-    state, live = _file_state(info)
+    state, live = common.file_state(info)
     _header(info, state)
 
     if info["status"] != "ok":
@@ -238,7 +245,7 @@ def render() -> None:
             f"{info['error_message']}"
         )
         return
-    if state == MISSING:
+    if state == common.MISSING:
         st.warning(
             "The file is missing since the last scan, so nothing can be queried. "
             "Rescan on the Overview page."
@@ -259,7 +266,7 @@ def render() -> None:
     row_count = None if pd.isna(row_count) else int(row_count)
 
     columns = access.columns_frame(path, mtime, rel_path, schema, table)
-    available = state != MISSING
+    available = state != common.MISSING
     # Lazy tabs: only the selected tab runs, so a preview query never starts unasked.
     columns_tab, summary_tab, preview_tab = st.tabs(
         ["Columns", "Summary", "Preview"], key="database_tabs", on_change="rerun"
@@ -276,6 +283,15 @@ def render() -> None:
                 info, live, schema, table, columns["column_name"].tolist(), row_count, available
             )
 
-    if st.button("Open in SQL", key="open_in_sql", disabled=not available):
+    sql_col, plot_col, _ = st.columns([1, 1, 6])
+    if sql_col.button("Open in SQL", key="open_in_sql", disabled=not available):
         st.session_state["sql_text"] = f"SELECT * FROM {qualified_name(schema, table)} LIMIT 100"
         st.switch_page(nav.PAGES["sql"])
+    if plot_col.button(
+        "Plot this table",
+        key="plot_this_table",
+        disabled=not available,
+        on_click=_prepare_plot,
+        args=(_plot_prefill(rel_path, chosen, columns),),
+    ):
+        st.switch_page(nav.PAGES["plot"])

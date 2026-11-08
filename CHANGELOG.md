@@ -14,6 +14,13 @@
    prints the reduced chart data as CSV or JSON with a summary line (strategy,
    bucket, points) and, with `--show-sql`, the query on stderr; `make-demo
    --big` adds a 200,000-row table (D-037).
+5. **Plot page** (v0.3 Phase 3): pick a database and table, a chart kind (line,
+   scatter, histogram, bar), x, y columns, a colour column, an SQL filter and
+   the point budget; the data is reduced in DuckDB, drawn with Plotly under the
+   fixed chart rules (eight-colour palette in series order, `(other)` grey, one
+   y axis or one panel per column, min to max band), and shown with a caption
+   about the reduction, a table view, a CSV download and the SQL. **Plot this
+   table** on the Database page hands the table over (D-038).
 
 ## 0.2.1 (2026-11-08)
 

@@ -119,7 +119,8 @@ def test_renders_header_tables_and_columns(pointed_at) -> None:
     assert config_columns["column_name"].tolist() == ["key", "value"]
     assert [t.label for t in at.tabs] == ["Columns", "Summary", "Preview"]
     assert at.session_state["database_tabs"] == "Columns"
-    assert not at.button or [b.label for b in at.button] == ["Open in SQL"]  # lazy: no summary yet
+    # lazy: no summary yet, only the hand-off buttons
+    assert not at.button or [b.label for b in at.button] == ["Open in SQL", "Plot this table"]
 
 
 def test_columns_tab_of_the_events_table(pointed_at) -> None:

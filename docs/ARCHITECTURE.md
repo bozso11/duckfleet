@@ -211,9 +211,12 @@ Rules:
 ```
 launch.py         console script duckfleet-ui -> streamlit run app.py
 app.py            st.set_page_config, st.navigation(list(nav.PAGES.values()))
-nav.py            the st.Page objects: Overview, Database, SQL (views import it inside functions)
+nav.py            the st.Page objects: Overview, Database, Plot, SQL (views import it inside functions)
 common.py         environment, root and catalog resolution, keep_valid, the shared database
                   selectbox
+views/plot.py     render(): table and chart kind, form (x, y, colour, filter, options, Plot),
+                  chart, caption, Plotted data (table, CSV), SQL
+charts.py         palette, template, needs_panels, Plotly figures of PlotData, to_frame (no widgets)
 views/overview.py render(): sidebar (recent-roots selectbox, root folder, workers, max files,
                   full rescan, sniff all, Scan and Load existing catalog buttons), metrics,
                   fleet table, families + matrix, table variants, diff, timeline, health, rejected
@@ -223,9 +226,9 @@ views/sql.py      render(): schema expander, editor, form (Options + Run), Clear
                   downloads, history
 scan_runner.py    subprocess (python -m duckfleet_core scan --progress json) + JSON-lines
 catalog_access.py st.cache_data wrappers keyed by catalog path + mtime, DataFrames
-query_access.py   the process-wide QueryConfig (temp dir under the cache), cached preview pages
-                  keyed by the file's live size and mtime, summary helpers, result DataFrames
-                  (never cached for ad-hoc SQL)
+query_access.py   the process-wide QueryConfig (temp dir under the cache), cached preview pages and
+                  plot data keyed by the file's live size and mtime, summary helpers, result
+                  DataFrames (never cached for ad-hoc SQL)
 ```
 
 The pages read `DUCKFLEET_ROOT` and `DUCKFLEET_CACHE_DIR` for their defaults
@@ -234,5 +237,6 @@ The pages read `DUCKFLEET_ROOT` and `DUCKFLEET_CACHE_DIR` for their defaults
 shared between pages lives in the session state: `active_root`,
 `selected_rel_path`, `selected_table`, `sql_text`. Widgets whose value must survive a visit to
 another page (the six sidebar inputs, `selected_rel_path`, `selected_table`, `sql_text`,
-`sql_max_rows`, `sql_timeout`) carry a `key` and `persist_state="session"`. Later versions add
-`views/plot.py`.
+`sql_max_rows`, `sql_timeout`, the plot options) carry a `key` and `persist_state="session"`.
+The Plot page keeps its last request (the spec as JSON, not the data) in `plot_request`, and
+`plot_prefill` carries what **Plot this table** hands over.

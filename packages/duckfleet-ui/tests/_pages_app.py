@@ -7,9 +7,13 @@ do when the user visits another page.
 
 import streamlit as st
 
-from duckfleet_ui.views import database, overview, sql
+from duckfleet_ui.views import database, overview, plot, sql
 
 st.set_page_config(page_title="duckfleet", layout="wide")
-{"overview": overview.render, "database": database.render, "sql": sql.render}[
-    st.session_state.get("page", "overview")
-]()
+PAGES = {
+    "overview": overview.render,
+    "database": database.render,
+    "plot": plot.render,
+    "sql": sql.render,
+}
+PAGES[st.session_state.get("page", "overview")]()

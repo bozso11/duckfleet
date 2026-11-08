@@ -5,7 +5,7 @@ Status values: `done vX` (shipped in version X), `planned vX` (in the
 version ladder), `open option` (not scheduled), `out of scope`. Update the
 row in the same commit that changes the behaviour.
 
-Last updated: 2026-11-08 (0.2.1; v0.3 not started).
+Last updated: 2026-11-08 (v0.3 in progress: Plot page and `plot` command done).
 
 ## Discovery and scanning
 
@@ -64,9 +64,9 @@ Last updated: 2026-11-08 (0.2.1; v0.3 not started).
 
 | ID | Feature | Status | Limits | Notes |
 |---|---|---|---|---|
-| F-PLOT-01 | Line, scatter, histogram, bar for chosen columns | planned v0.3 | L-11 | Plotly |
-| F-PLOT-02 | Temporal x axis offered first; DuckDB-side time bucketing and downsampling | planned v0.3 | L-11 | |
-| F-PLOT-03 | Colour or group-by column; optional SQL filter | planned v0.3 | | |
+| F-PLOT-01 | Line, scatter, histogram, bar for chosen columns | done v0.3 | L-11, L-18, L-20, L-21 | Plotly; fixed chart rules (D-032); table view and CSV of the plotted data; `duckfleet plot` prints the same data |
+| F-PLOT-02 | Temporal x axis offered first; DuckDB-side time bucketing and downsampling | done v0.3 | L-11, L-21 | mean with min to max band; numeric buckets, reservoir sample, bins; row order as x (D-033, D-036) |
+| F-PLOT-03 | Colour or group-by column; optional SQL filter | done v0.3 | L-19 | colour folds into `(other)` beyond the cap; the filter runs on the sandboxed connection |
 | F-PLOT-04 | Overlay the same table across files | planned v0.4 | L-12 | |
 | F-PLOT-05 | Very large plots (Datashader) | open option | | would move the UI to Panel |
 
@@ -87,7 +87,7 @@ Last updated: 2026-11-08 (0.2.1; v0.3 not started).
 | F-CLI-04 | `duckfleet plot`: the reduced data of a chart as CSV or JSON | done v0.3 | L-11, L-18 to L-21 | same reduction as the Plot page; summary and `--show-sql` on stderr; no chart or HTML export (D-037) |
 | F-UI-01 | Streamlit Overview page | done v0.1 | | blocking scan behind a progress bar; metrics, fleet table, families + matrix, table variants, diff, timeline, health, rejected |
 | F-UI-02 | Database page | done v0.2 | | lazy tabs (D-028) |
-| F-UI-03 | Plot page | planned v0.3 | | |
+| F-UI-03 | Plot page | done v0.3 | | **Plot this table** on the Database page hands the table over (D-038) |
 | F-UI-04 | SQL page | done v0.2 | | D-029 |
 | F-DOC-01 | Feature matrix, limits, tuning, decisions, roadmap kept current | done v0.1 | | this file |
 | F-OPS-01 | Windows and Linux CI | done v0.0 | | Phase 0 |

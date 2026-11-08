@@ -19,6 +19,7 @@ import pandas as pd
 import pyarrow as pa
 import streamlit as st
 
+from duckfleet_core.plotdata import PlotData, PlotSpec, fetch_plot_data
 from duckfleet_core.query import QueryConfig, QueryResult, preview_table
 from duckfleet_core.store import SummaryStore
 from duckfleet_core.summary import TableSummary
@@ -133,6 +134,18 @@ def preview_page(
     )
     frame, as_text = frame_from_result(result)
     return frame, result.truncated, as_text, result.elapsed_s
+
+
+# ---------------------------------------------------------------- plots
+
+
+@st.cache_data(show_spinner=False, max_entries=16)
+def plot_data(abs_path: str, size_bytes: int, mtime_ns: int, spec_json: str) -> PlotData:
+    """The reduced data of one plot; keyed by the file's live size and mtime and the spec.
+
+    ``size_bytes`` and ``mtime_ns`` only key the cache. Raises ``QueryError`` (not cached).
+    """
+    return fetch_plot_data(abs_path, PlotSpec.model_validate_json(spec_json), query_config())
 
 
 # ---------------------------------------------------------------- summaries

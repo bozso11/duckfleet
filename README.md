@@ -49,6 +49,11 @@ uv run duckfleet-ui                        # Streamlit app
    with their columns, a cached per-column summary and a paged preview, and
    **Open in SQL** hands a query to the **SQL** page: a read-only editor with
    a row limit, a timeout, CSV and Parquet downloads and a query history.
+   **Plot this table** hands the table to the **Plot** page: line, scatter,
+   histogram or bar of chosen columns, a colour column for series, an SQL
+   filter and a point budget; DuckDB reduces the data (time buckets with a
+   min to max band, a sample for scatter) so the browser never gets more than
+   the budget; the plotted data is shown as a table and downloadable as CSV.
    Extra arguments go to Streamlit, for example
    `uv run duckfleet-ui --server.port 8600`. The environment variables
    `DUCKFLEET_ROOT` and `DUCKFLEET_CACHE_DIR` set the initial root and the

@@ -15,6 +15,10 @@ from duckfleet_core.store import ProfileStore, recent_roots
 ENV_ROOT = "DUCKFLEET_ROOT"
 ENV_CACHE_DIR = "DUCKFLEET_CACHE_DIR"
 
+MISSING = "missing"
+CHANGED = "changed"
+CURRENT = "current"
+
 # Widgets whose value must survive a visit to another page carry ``key=`` and
 # ``persist_state="session"``: Streamlit otherwise drops the state of a widget in every run that
 # does not render it (V-11; this replaces the earlier ``keep()`` helper).
@@ -23,6 +27,20 @@ ENV_CACHE_DIR = "DUCKFLEET_CACHE_DIR"
 def cache_dir() -> Path:
     env = os.environ.get(ENV_CACHE_DIR)
     return Path(env) if env else default_cache_dir()
+
+
+def file_state(info: dict[str, Any]) -> tuple[str, tuple[int, int] | None]:
+    """``(state, live (size, mtime_ns))`` of a database file: ``missing``, ``changed`` (differs
+    from the scan) or ``current``. The live values key the caches (V-05), not the catalog row's.
+    """
+    try:
+        stat = Path(info["abs_path"]).stat()
+    except OSError:
+        return MISSING, None
+    live = (stat.st_size, stat.st_mtime_ns)
+    if live != (info["size_bytes"], info["mtime_ns"]):
+        return CHANGED, live
+    return CURRENT, live
 
 
 def clean_root(text: str) -> str:
