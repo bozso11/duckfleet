@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-11-06 (0.2.0). Section 5 holds the final catalog schema,
+Last updated: 2026-11-08 (0.2.1). Section 5 holds the final catalog schema,
 copied from `duckfleet_core/catalog.py` (`SCHEMA_SQL`).
 
 ## 1. Two packages, one boundary
@@ -58,6 +58,9 @@ the CLI, notebooks and tests.
     the row threshold) and the `TableSummary` models; `store.SummaryStore`
     caches them as JSON sidecars (D-020).
 14. **cli_query** (v0.2): the commands `sql`, `summarize`, `preview` (D-027).
+15. **tempdir** (0.2.1): the per-process DuckDB temp folder `<cache dir>/tmp/<pid>`
+    (created before connecting, removed at exit, stale folders swept by `run_scan`),
+    used by the query layer, the profiler and the catalog writer (D-034, D-035).
 
 ## 3. Data flow
 
@@ -99,6 +102,7 @@ summaries/<file_key>/<table_key>.json  <--  SummaryStore (valid while size, mtim
 <user cache dir>                      platformdirs.user_cache_dir("duckfleet", appauthor=False)
                                       (D-015; Windows %LOCALAPPDATA%\duckfleet\Cache, Linux ~/.cache/duckfleet)
   recent_roots.json
+  tmp/<pid>/                          DuckDB spill files of one process (0.2.1), removed at exit
   roots/<root_key>/
     root.txt
     profiles/<file_key>.json
@@ -187,8 +191,12 @@ Rules:
    workers use N cores.
 4. Queries (v0.2): inside the UI or CLI process every connection to a scanned
    file uses the same config dict, because DuckDB refuses a second
-   connection to the same file with another config. Threads and memory are
-   resolved once per process and never page inputs. The lock is per
+   connection to the same file with another config. Threads, memory and the
+   temp directory are resolved once per process and never page inputs. The
+   profiler's config is the same sandbox (read-only, external access off,
+   configuration locked) except threads and memory, so an in-process scan
+   next to an open query connection works when those two agree (P-05). The
+   `temp_directory` key must come after `enable_external_access` (D-035). The lock is per
    database instance, the time zone per session, so no zone is set and
    TIMESTAMPTZ values show in the machine's zone (D-026).
 5. Query timeout: a watcher in the calling thread calls `interrupt()` on the
@@ -200,24 +208,27 @@ Rules:
 launch.py         console script duckfleet-ui -> streamlit run app.py
 app.py            st.set_page_config, st.navigation(list(nav.PAGES.values()))
 nav.py            the st.Page objects: Overview, Database, SQL (views import it inside functions)
-common.py         environment, root and catalog resolution, keep_valid, keep (widget state across
-                  pages), the shared database selectbox
+common.py         environment, root and catalog resolution, keep_valid, the shared database
+                  selectbox
 views/overview.py render(): sidebar (recent-roots selectbox, root folder, workers, max files,
                   full rescan, sniff all, Scan and Load existing catalog buttons), metrics,
                   fleet table, families + matrix, table variants, diff, timeline, health, rejected
 views/database.py render(): database selectbox, header, tables, lazy tabs Columns, Summary,
                   Preview, Open in SQL
-views/sql.py      render(): schema expander, editor, Run, Clear, Options, result grid, downloads,
-                  history
+views/sql.py      render(): schema expander, editor, form (Options + Run), Clear, result grid,
+                  downloads, history
 scan_runner.py    subprocess (python -m duckfleet_core scan --progress json) + JSON-lines
 catalog_access.py st.cache_data wrappers keyed by catalog path + mtime, DataFrames
-query_access.py   the process-wide QueryConfig, cached preview pages, summary helpers, result
-                  DataFrames (never cached for ad-hoc SQL)
+query_access.py   the process-wide QueryConfig (temp dir under the cache), cached preview pages
+                  keyed by the file's live size and mtime, summary helpers, result DataFrames
+                  (never cached for ad-hoc SQL)
 ```
 
 The pages read `DUCKFLEET_ROOT` and `DUCKFLEET_CACHE_DIR` for their defaults
 (the tests rely on them); `DUCKFLEET_QUERY_THREADS` and
 `DUCKFLEET_QUERY_MEMORY_MB` override the query connection's resources. State
 shared between pages lives in the session state: `active_root`,
-`selected_rel_path`, `selected_table`, `sql_text`. Later versions add
+`selected_rel_path`, `selected_table`, `sql_text`. Widgets whose value must survive a visit to
+another page (the six sidebar inputs, `selected_rel_path`, `selected_table`, `sql_text`,
+`sql_max_rows`, `sql_timeout`) carry a `key` and `persist_state="session"`. Later versions add
 `views/plot.py`.

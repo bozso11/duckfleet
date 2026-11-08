@@ -6,7 +6,7 @@ more is known about the real fleet (folder conventions, metadata tables,
 time columns), change the rule, update this table and add a
 `docs/DECISIONS.md` entry if the change is a design choice.
 
-Last updated: 2026-11-06 (0.2.0: every marker below exists in the code, `grep -r "TUNING(" packages`).
+Last updated: 2026-11-08 (0.2.1: every marker below exists in the code, `grep -r "TUNING(" packages`).
 
 | ID | Where | What it decides | Current rule | How to tune |
 |---|---|---|---|---|
@@ -21,3 +21,4 @@ Last updated: 2026-11-06 (0.2.0: every marker below exists in the code, `grep -r
 | family-labels | `fingerprint.py` `family_groups` (used by `assign_families`) | How families are numbered | By member count descending, then fingerprint | Stable naming across scans (persist labels) is an open option |
 | time-window-scope | `profiler.py` database `time_min`/`time_max` | Which tables contribute to a file's time span | All temporal columns of all tables; `infinity` and `-infinity` are skipped (`FILTER (WHERE isfinite(...))`); a table with a value outside Python's datetime range gets no window and a table error | Restrict to named tables or columns once the main time series table is known; treat `infinity` as an open-ended window if slowly changing dimension tables turn out to matter |
 | query-resources | `query.py` `QueryConfig.resolved_threads`, `resolved_memory_limit_mb` | Threads and memory of the one query connection per process | `min(4, cpu_count)` threads; `min(4 GB, RAM / 4)` memory, floor 512 MB; env `DUCKFLEET_QUERY_THREADS`, `DUCKFLEET_QUERY_MEMORY_MB` in the UI | Raise when large previews or summaries spill; keep fixed per process (D-021) |
+| timeline-padding | `views/overview.py` `_plot_windows` | Width of the timeline bar of a database whose window is a single instant | The larger of 1 hour and 0.5 % of the fleet span; the hover text says "single instant" | Change the factor or the floor if the bars are too thin or too fat on a real fleet |

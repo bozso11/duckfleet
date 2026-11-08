@@ -15,6 +15,7 @@ from duckfleet_core.discovery import RejectedFile, discover
 from duckfleet_core.fingerprint import TableDiff, TypeChange
 from duckfleet_core.models import DatabaseProfile, ScanSummary
 from duckfleet_core.profiler import profile_database
+from duckfleet_core.tempdir import process_temp_dir
 
 RUN1 = "exp_01/run_01/metrics.duckdb"
 RUN2 = "exp_02/run_01/metrics.duckdb"
@@ -382,3 +383,34 @@ def test_non_ascii_values_survive(tmp_path: Path, demo_profiles) -> None:
     assert row["rel_path"] == "données/été 1/ünï.duckdb"
     assert row["tags"] == {"clé": "valeur é"}
     assert reader.rejected() == [{"rel_path": "ç/ñ.db", "reason": "unreadable"}]
+
+
+def test_the_catalog_writer_connects_with_limits_and_a_cache_temp_directory(
+    tmp_path: Path, demo_profiles, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """R-07 and V-01: threads, memory and the temp directory of the writer connection."""
+    configs: list[dict] = []
+    real_connect = duckdb.connect
+
+    def spy(*args, **kwargs):
+        configs.append(kwargs.get("config", {}))
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(catalog.duckdb, "connect", spy)
+    cache = tmp_path / "cache"
+    build_catalog(
+        demo_profiles,
+        make_summary(ScanConfig(cache_dir=str(cache))),
+        REJECTED,
+        tmp_path / "catalog.duckdb",
+        tmp_path / "catalog.duckdb.tmp",
+    )
+    assert configs == [
+        {
+            "threads": 2,
+            "memory_limit": "1GB",
+            "temp_directory": str(process_temp_dir(cache)),
+            "autoinstall_known_extensions": False,
+            "autoload_known_extensions": False,
+        }
+    ]

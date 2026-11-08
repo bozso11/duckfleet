@@ -30,6 +30,7 @@ from duckfleet_core.models import (
 )
 from duckfleet_core.profiler import error_profile, profile_database
 from duckfleet_core.store import ProfileStore, remember_root
+from duckfleet_core.tempdir import sweep_stale_temp_dirs
 
 logger = logging.getLogger("duckfleet")
 
@@ -141,6 +142,10 @@ def run_scan(root: Path, config: ScanConfig, on_event: EventCallback | None = No
     )
 
     discovery = discover(Path(root), resolved)  # raises NotADirectoryError for a bad root
+    # Temp folders of processes that no longer exist (a crashed worker leaves one) (V-01).
+    removed_tmp = sweep_stale_temp_dirs(cache_dir)
+    if removed_tmp:
+        logger.debug("removed stale temp folders: %s", ", ".join(removed_tmp))
     store = ProfileStore(cache_dir, discovery.root)
     emit(
         {

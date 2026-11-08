@@ -8,6 +8,7 @@ item 3); the hand-off from the Database page is asserted through the session sta
 from __future__ import annotations
 
 import io
+import time
 from pathlib import Path
 
 import duckdb
@@ -121,7 +122,7 @@ def test_multiple_statements_say_so(pointed_at) -> None:
 
 def test_a_result_survives_reruns_caused_by_other_widgets(pointed_at) -> None:
     at = run_sql(start(), "select 41 + 1 as answer")
-    at.number_input(key="sql_timeout").set_value(30).run()
+    at.text_area(key="sql_text").set_value("select 2").run()  # an edit reruns the page
     assert not at.exception
     assert any(list(f.columns) == ["answer"] for f in shown_frames(at))
     assert at.session_state["sql_result"]["rows"] == 1
@@ -163,8 +164,11 @@ def test_a_syntax_error_shows_duckdb_s_message(pointed_at) -> None:
 
 def test_the_timeout_option_stops_a_runaway_query_and_the_next_one_runs(pointed_at) -> None:
     at = start()
-    at.number_input(key="sql_timeout").set_value(1).run()
+    assert at.button[0].proto.form_id  # Run submits the Options inputs together with the click
+    at.number_input(key="sql_timeout").set_value(1)  # V-10: set and run in one go
+    started = time.perf_counter()
     at = run_sql(at, CROSS_JOIN)
+    assert time.perf_counter() - started < 30  # about 1 s, not the default 60
     assert not at.exception, [e.value for e in at.exception]
     (error,) = at.error
     assert error.value.startswith("timeout:")
@@ -179,7 +183,7 @@ def test_the_timeout_option_stops_a_runaway_query_and_the_next_one_runs(pointed_
 
 def test_max_rows_five_gives_a_truncated_result(pointed_at) -> None:
     at = start()
-    at.number_input(key="sql_max_rows").set_value(5).run()
+    at.number_input(key="sql_max_rows").set_value(5)
     at = run_sql(at, "select * from events order by ts")
     assert not at.exception, [e.value for e in at.exception]
     grid = next(f for f in shown_frames(at) if list(f.columns) == ["ts", "value", "run_id"])
@@ -190,7 +194,7 @@ def test_max_rows_five_gives_a_truncated_result(pointed_at) -> None:
 
 def test_a_result_that_fits_has_no_truncation_warning(pointed_at) -> None:
     at = start()
-    at.number_input(key="sql_max_rows").set_value(5).run()
+    at.number_input(key="sql_max_rows").set_value(5)
     at = run_sql(at, "select * from config")  # 3 rows
     assert not at.warning
 
@@ -226,7 +230,7 @@ def test_the_download_belongs_to_the_text_it_was_made_from(pointed_at) -> None:
     at.button[2].click().run()
     assert len(at.get("download_button")) == 1
     at.text_area(key="sql_text").set_value("select * from events").run()
-    assert not at.get("download_button")  # another text: prepare again
+    assert not at.get("download_button")  # another text: run, then prepare again
     at.button[0].click().run()  # running again drops the old download
     assert "download" not in at.session_state
 
@@ -243,13 +247,28 @@ def test_a_truncated_export_warns_with_the_cap(
     assert any("export was cut at 100 rows" in w.value for w in at.warning)
 
 
-def test_an_export_of_a_failing_query_shows_the_error(pointed_at) -> None:
+def test_an_export_that_fails_shows_the_error(pointed_at) -> None:
+    pytest.importorskip("pyarrow")
+    at = run_sql(start(), "select [1, 2] as nested")
+    at.button[2].click().run()  # Prepare CSV: the Arrow CSV writer has no list type
+    assert any(e.value.startswith("other:") and "Parquet" in e.value for e in at.error)
+    assert "download" not in at.session_state
+
+
+def test_prepare_is_disabled_while_the_editor_differs_from_the_result(pointed_at) -> None:
+    """V-12: the grid shows the last run; the downloads must not export other text."""
     pytest.importorskip("pyarrow")
     at = run_sql(start(), "select 1 as ok")
-    at.text_area(key="sql_text").set_value("insert into events values (now(), 1, 1)")
-    at.button[2].click().run()
-    assert any(e.value.startswith("read_only:") for e in at.error)
-    assert "download" not in at.session_state
+    assert [b.disabled for b in at.button[2:]] == [False, False] and not caption_mentions(at)
+    at.text_area(key="sql_text").set_value("insert into events values (now(), 1, 1)").run()
+    assert [b.disabled for b in at.button[2:]] == [True, True]
+    assert "differs from the query behind the result" in caption(at)
+    at.text_area(key="sql_text").set_value("select 1 as ok").run()  # back to the shown text
+    assert [b.disabled for b in at.button[2:]] == [False, False]
+
+
+def caption_mentions(at: AppTest) -> bool:
+    return "differs from the query" in caption(at)
 
 
 # ---------------------------------------------------------------- history, clear, database change

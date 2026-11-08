@@ -235,3 +235,60 @@ def test_prune_removes_the_summaries_of_pruned_profiles(tmp_path: Path, db: Path
     assert not (summaries.folder / file_key("gone/b.duckdb")).exists()
     profiles.prune(set())
     assert not (summaries.folder / file_key("keep/a.duckdb")).exists()
+
+
+# ---------------------------------------------------------------- odd tables (review test gap 6)
+
+
+@pytest.fixture
+def odd_db(tmp_path: Path) -> Path:
+    path = tmp_path / "odd.duckdb"
+    con = duckdb.connect(str(path))
+    try:
+        con.execute(
+            "CREATE TABLE nested AS SELECT [i, i + 1] AS l, {'a': i, 'b': 'x'} AS s, "
+            "map {'k': i} AS m FROM range(5) r(i)"
+        )
+        con.execute("CREATE TABLE bin AS SELECT encode('v' || i::VARCHAR) AS b FROM range(5) r(i)")
+        con.execute("CREATE TABLE base AS SELECT i, 'x' AS v FROM range(5) r(i)")
+        con.execute("CREATE VIEW orphan AS SELECT * FROM base")
+    finally:
+        con.close()
+    con = duckdb.connect(str(path))
+    try:
+        con.execute("DROP TABLE base")  # DuckDB lets a base table go; the view stays and breaks
+    finally:
+        con.close()
+    return path
+
+
+def test_a_table_with_only_nested_columns_is_summarised(odd_db: Path) -> None:
+    s = summarize(odd_db, "nested", row_count=5)
+    assert s.error is None
+    assert [c.column_name for c in s.columns] == ["l", "s", "m"]
+    kinds = [c.column_type.split("(")[0].split("[")[0] for c in s.columns]
+    assert kinds == ["BIGINT", "STRUCT", "MAP"]
+    assert all(c.count == 5 and c.null_percentage == 0.0 and c.avg is None for c in s.columns)
+
+
+def test_a_table_with_only_a_binary_column_is_summarised(odd_db: Path) -> None:
+    s = summarize(odd_db, "bin", row_count=5)
+    assert s.error is None and [c.column_type for c in s.columns] == ["BLOB"]
+    assert (s.columns[0].min, s.columns[0].max, s.columns[0].avg) == ("v0", "v4", None)
+
+
+def test_a_view_whose_base_table_was_dropped_gives_an_error_summary(odd_db: Path) -> None:
+    s = summarize(odd_db, "orphan", row_count=None)
+    assert s.columns == [] and not s.sampled
+    assert s.error is not None and s.error.startswith("sql: ") and "base" in s.error
+
+
+def test_the_summary_store_keeps_the_error_of_an_orphaned_view(
+    tmp_path: Path, odd_db: Path
+) -> None:
+    summaries = make_store(tmp_path)
+    s = summaries.get_or_compute(odd_db, REL, "main", "orphan", QueryConfig(), row_count=None)
+    assert s.error and summaries.path(REL, "main", "orphan").is_file()
+    stat = odd_db.stat()
+    assert summaries.load(REL, "main", "orphan", size_bytes=stat.st_size,
+                          mtime_ns=stat.st_mtime_ns) is None  # fmt: skip

@@ -15,14 +15,9 @@ from duckfleet_core.store import ProfileStore, recent_roots
 ENV_ROOT = "DUCKFLEET_ROOT"
 ENV_CACHE_DIR = "DUCKFLEET_CACHE_DIR"
 
-# Widget keys that must survive a visit to another page: Streamlit drops the state of a widget on
-# every run in which the widget is not rendered, so each page turns them into plain state.
-# Widgets with a ``value=`` or ``index=`` default must not be listed (Streamlit warns when the
-# state of such a widget was set through the API); their defaults live in the session state.
-KEPT_KEYS = (
-    "root_input", "recent_root", "workers_input", "max_files_input", "full_input", "sniff_input",
-    "selected_rel_path", "selected_table", "sql_text", "sql_max_rows", "sql_timeout",
-)  # fmt: skip
+# Widgets whose value must survive a visit to another page carry ``key=`` and
+# ``persist_state="session"``: Streamlit otherwise drops the state of a widget in every run that
+# does not render it (V-11; this replaces the earlier ``keep()`` helper).
 
 
 def cache_dir() -> Path:
@@ -43,13 +38,6 @@ def keep_valid(key: str, options: list[Any]) -> None:
     """Drop a stored selection that is no longer among the options (after a rescan)."""
     if key in st.session_state and st.session_state[key] not in options:
         del st.session_state[key]
-
-
-def keep(*keys: str) -> None:
-    """Turn the widget state under ``keys`` into plain session state so it survives this run."""
-    for key in keys:
-        if key in st.session_state:
-            st.session_state[key] = st.session_state[key]
 
 
 def ordered_databases(dbs: pd.DataFrame) -> list[str]:
@@ -74,7 +62,11 @@ def pick_database(dbs: pd.DataFrame) -> str | None:
         return None
     keep_valid("selected_rel_path", options)
     return st.selectbox(
-        "Database", options, key="selected_rel_path", help="Shared by all pages."
+        "Database",
+        options,
+        key="selected_rel_path",
+        persist_state="session",
+        help="Shared by all pages.",
     )
 
 

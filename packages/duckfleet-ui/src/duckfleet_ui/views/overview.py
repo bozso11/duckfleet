@@ -43,12 +43,17 @@ def _sidebar(cache_dir: Path) -> tuple[str, ScanOptions, bool, bool]:
             "Recent roots",
             ["", *recents],
             key="recent_root",
+            persist_state="session",
             on_change=_pick_recent,
             format_func=lambda value: value or "(choose)",
         )
-        st.text_input("Root folder", key="root_input", help="Folder tree with DuckDB files")
-        # Defaults go into the session state, not into ``value=``: the state of these widgets
-        # is carried over to the other pages (common.keep), which would clash with ``value=``.
+        st.text_input(
+            "Root folder",
+            key="root_input",
+            persist_state="session",
+            help="Folder tree with DuckDB files",
+        )
+        # The defaults live in the session state (set once), not in ``value=``.
         st.session_state.setdefault("workers_input", ScanConfig().resolved_workers())
         st.session_state.setdefault("max_files_input", ScanConfig().max_files)
         st.number_input(
@@ -56,11 +61,21 @@ def _sidebar(cache_dir: Path) -> tuple[str, ScanOptions, bool, bool]:
             min_value=1,
             max_value=MAX_POOL_WORKERS,
             key="workers_input",
+            persist_state="session",
             help="Worker processes; default is all CPU cores but two",
         )
-        st.number_input("Max files", min_value=1, step=100, key="max_files_input")
-        st.checkbox("Full rescan", key="full_input", help="Ignore cached profiles")
-        st.checkbox("Sniff all files", key="sniff_input", help="Header-check every file")
+        st.number_input(
+            "Max files", min_value=1, step=100, key="max_files_input", persist_state="session"
+        )
+        st.checkbox(
+            "Full rescan", key="full_input", persist_state="session", help="Ignore cached profiles"
+        )
+        st.checkbox(
+            "Sniff all files",
+            key="sniff_input",
+            persist_state="session",
+            help="Header-check every file",
+        )
         scan_clicked = st.button("Scan", type="primary", width="stretch")
         load_clicked = st.button("Load existing catalog", width="stretch")
         st.caption(f"Cache: {cache_dir}")
@@ -182,6 +197,7 @@ def _fleet_table(dbs: pd.DataFrame) -> None:
         index=None,
         placeholder="Choose a database",
         key="selected_rel_path",
+        persist_state="session",
         help="Also the selection on the Database page.",
     )
 
@@ -314,7 +330,7 @@ def _plot_windows(timeline: pd.DataFrame) -> tuple[pd.DataFrame, list[str]]:
     single = frame["time_max"] == frame["time_min"]
     if single.any():
         span = frame["time_max"].max() - frame["time_min"].min()
-        minimum = max(pd.Timedelta(hours=1), span * 0.005)
+        minimum = max(pd.Timedelta(hours=1), span * 0.005)  # TUNING(timeline-padding)
         frame.loc[single, "window"] = "single instant " + frame.loc[single, "time_min"].dt.strftime(
             fmt
         )
@@ -375,7 +391,6 @@ def render() -> None:
     """Render the Overview page."""
     cache_dir = common.cache_dir()
     common.init_state(cache_dir)
-    common.keep(*common.KEPT_KEYS)
     root, options, scan_clicked, load_clicked = _sidebar(cache_dir)
 
     st.title("duckfleet")

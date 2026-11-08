@@ -6,6 +6,7 @@ from concurrent.futures import Future
 from concurrent.futures.process import BrokenProcessPool
 from pathlib import Path
 
+import _cancel_worker
 import duckdb
 import pytest
 
@@ -257,6 +258,17 @@ def test_non_ascii_root_with_a_space_and_a_pool(tmp_path: Path) -> None:
     assert RUN1 in names
 
 
+@pytest.mark.timeout(120)
+def test_a_valid_tag_pattern_that_matches_nothing_works_in_a_pool(
+    demo_fleet: Path, cache_dir: Path
+) -> None:
+    """R-03: the pattern is validated once and shipped to the workers as plain text."""
+    summary, _ = scan(demo_fleet, cache_dir, workers=2, tag_patterns=["(?P<key>zzz)_(?P<value>9)"])
+    assert (summary.files_candidates, summary.files_failed) == (13, 3)
+    rows = CatalogReader(summary.catalog_path).databases()
+    assert len(rows) == 13 and all(row["tags"] == {} for row in rows)
+
+
 @pytest.mark.timeout(60)
 def test_a_locked_file_is_reported_not_fatal(
     fresh_demo_fleet: Path, cache_dir: Path, hold_open
@@ -277,11 +289,13 @@ class StopScan(Exception):
     pass
 
 
+@pytest.mark.timeout(120)
 def test_a_consumer_error_cancels_the_queued_files(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """P-02: with a real spawn pool, an error after the first saved profile must not make the
-    pool profile all the queued files first.
+    """P-02: with a real spawn pool, an error after the first profile must not make the pool
+    profile all the queued files first. A marker file written inside the workers counts the
+    files that were really started: without ``cancel_futures`` all 20 would be.
     """
     fleet = tmp_path / "many"
     fleet.mkdir()
@@ -289,19 +303,24 @@ def test_a_consumer_error_cancels_the_queued_files(
         con = duckdb.connect(str(fleet / f"db_{i:02d}.duckdb"))
         con.execute("CREATE TABLE t AS SELECT range AS i FROM range(2000)")
         con.close()
+    markers = tmp_path / "markers"
+    markers.mkdir()
+    monkeypatch.setenv(_cancel_worker.MARKER_DIR_ENV, str(markers))
+    monkeypatch.setattr(coordinator, "profile_database", _cancel_worker.slow_profile)
     config = ScanConfig(cache_dir=str(tmp_path / "cache"), workers=2)
     discovery = coordinator.discover(fleet, config)
     assert len(discovery.candidates) == 20
-    store = ProfileStore(tmp_path / "cache", discovery.root)
     stream = coordinator._profiles_in_pool(
         discovery.candidates, config.model_dump(mode="json"), config, 2
     )
     with pytest.raises(StopScan):
-        for _candidate, result in stream:
-            store.save(coordinator.DatabaseProfile.model_validate(result))
+        for _candidate, _result in stream:
             raise StopScan
     stream.close()  # what run_scan does through contextlib.closing
-    assert 1 <= len(list(store.profiles_dir.glob("*.json"))) < 20
+    started = len(list(markers.glob("*.started")))
+    # the files already running or in the call queue finish (2 workers + 1 queued call), the
+    # other ~17 are cancelled
+    assert 1 <= started <= 8, started
 
 
 def test_the_pool_is_shut_down_with_cancel_futures_when_the_consumer_stops(

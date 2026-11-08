@@ -30,6 +30,7 @@ from duckfleet_core.fingerprint import (
     table_variants,
 )
 from duckfleet_core.models import DatabaseProfile, ScanSummary
+from duckfleet_core.tempdir import ensure_temp_dir, process_temp_dir
 
 logger = logging.getLogger("duckfleet")
 
@@ -204,11 +205,13 @@ def build_catalog(
         summary.config.model_dump_json(),
     ]  # fmt: skip
 
+    temp_dir = ensure_temp_dir(process_temp_dir(summary.config.resolved_cache_dir()))  # V-01
     con = duckdb.connect(
         str(tmp_path),
         config={
             "threads": 2,
             "memory_limit": "1GB",
+            "temp_directory": temp_dir,
             "autoinstall_known_extensions": False,
             "autoload_known_extensions": False,
         },

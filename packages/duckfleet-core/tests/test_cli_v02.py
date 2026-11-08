@@ -5,6 +5,9 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
 import duckdb
@@ -120,6 +123,66 @@ def test_database_names_accept_backslashes_and_a_dot_slash(scanned, capsys) -> N
     for spelled in ("exp_01\\run_01\\metrics.duckdb", "./exp_01/run_01/metrics.duckdb"):
         code, out, _ = run(capsys, *args(scanned, "sql", spelled, "select 1"))
         assert code == 0 and out.splitlines()[-1] == "1", spelled
+
+
+# ---------------------------------------------------------------- output encoding and values
+
+
+def _stdout_bytes(scanned: tuple[Path, Path], sql: str, fmt: str) -> tuple[bytes, bytes]:
+    """Run the real CLI in a child process whose stdout would be latin-1 without the fix."""
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONUTF8", "PYTHONIOENCODING")}
+    env["PYTHONIOENCODING"] = "latin-1"  # what a Windows code page does to a pipe
+    done = subprocess.run(
+        [sys.executable, "-m", "duckfleet_core", *args(scanned, "sql", DB, sql, "--format", fmt)],
+        capture_output=True,
+        env=env,
+        timeout=120,
+    )
+    assert done.returncode == 0, done.stderr
+    return done.stdout, done.stderr
+
+
+def test_csv_and_json_are_utf8_with_lf_whatever_the_console_encoding(scanned) -> None:
+    """V-03: no ``?`` for characters outside the code page, no CR LF from the csv writer."""
+    sql = "select '日本語 é' as t, 2 as n"
+    out, _err = _stdout_bytes(scanned, sql, "csv")
+    assert out == "t,n\n日本語 é,2\n".encode()
+    out, _err = _stdout_bytes(scanned, sql, "json")
+    assert out == '{"t": "日本語 é", "n": 2}\n'.encode()
+
+
+def _reject_constant(name: str):
+    raise AssertionError(f"not JSON: {name}")
+
+
+def test_json_has_no_nan_and_bytes_are_hex(scanned, capsys) -> None:
+    """V-07: ``allow_nan=False`` raises before ``default`` runs, so values are mapped first."""
+    sql = (
+        "select 'nan'::DOUBLE as n, 'inf'::DOUBLE as i, '-inf'::FLOAT as f, "
+        "'\\xAA\\x00'::BLOB as b, "
+        "[1, 'nan'::DOUBLE] as l, {'k': 'nan'::DOUBLE, 'v': 2} as s, 1.5::DOUBLE as ok"
+    )
+    code, out, _ = run(capsys, *args(scanned, "sql", DB, sql, "--format", "json"))
+    assert code == 0
+    row = json.loads(out, parse_constant=_reject_constant)
+    assert row == {
+        "n": None, "i": None, "f": None, "b": "aa00", "l": [1.0, None],
+        "s": {"k": None, "v": 2}, "ok": 1.5,
+    }  # fmt: skip
+
+
+def test_csv_renders_arrays_and_structs_as_json_text(scanned, capsys) -> None:
+    sql = "select [1, 2] as l, {'a': 'x', 'b': [3]} as s, ['é'] as u"
+    code, out, _ = run(capsys, *args(scanned, "sql", DB, sql, "--format", "csv"))
+    assert code == 0
+    rows = list(csv.reader(io.StringIO(out)))
+    assert rows[1] == ["[1, 2]", '{"a": "x", "b": [3]}', '["é"]']
+
+
+def test_a_statement_without_rows_prints_its_count_column(scanned, capsys) -> None:
+    """V-08: DuckDB reports a ``Count`` column; the unreachable '(no result set)' text is gone."""
+    code, out, _ = run(capsys, *args(scanned, "sql", DB, "create temp table z (i integer)"))
+    assert code == 0 and "(no result set)" not in out
 
 
 # ---------------------------------------------------------------- failures before the query

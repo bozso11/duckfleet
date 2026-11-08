@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import _thread
 import io
 import os
+import threading
 import time
 from datetime import UTC, datetime
 from decimal import Decimal
@@ -100,16 +102,71 @@ def test_threads_and_memory_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
     assert QueryConfig(memory_limit_mb=700).resolved_memory_limit_mb() == 700
 
 
-def test_connection_config_is_the_sandbox() -> None:
-    config = connection_config(QueryConfig(threads=2, memory_limit_mb=600))
+def test_connection_config_is_the_sandbox(tmp_path: Path) -> None:
+    temp = tmp_path / "cache" / "tmp" / "7"
+    config = connection_config(QueryConfig(threads=2, memory_limit_mb=600, temp_dir=str(temp)))
     assert config == {
         "threads": 2,
         "memory_limit": "600MB",
         "autoinstall_known_extensions": False,
         "autoload_known_extensions": False,
         "enable_external_access": False,
+        "temp_directory": str(temp),
         "lock_configuration": True,
     }
+    assert temp.is_dir()  # created before connecting
+    # DuckDB refuses the temp directory once external access is off: the order matters.
+    keys = list(config)
+    assert keys.index("temp_directory") > keys.index("enable_external_access")
+
+
+def test_the_temp_directory_defaults_to_the_cache(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(query, "default_cache_dir", lambda: tmp_path / "default-cache")
+    expected = tmp_path / "default-cache" / "tmp" / str(os.getpid())
+    assert QueryConfig().resolved_temp_dir() == expected
+    assert QueryConfig(temp_dir=str(tmp_path / "x")).resolved_temp_dir() == tmp_path / "x"
+
+
+def test_the_temp_directory_takes_effect(qdb: Path, tmp_path: Path) -> None:
+    temp = tmp_path / "cache" / "tmp" / "1"
+    with open_readonly(qdb, QueryConfig(temp_dir=str(temp))) as con:
+        (setting,) = con.execute("select current_setting('temp_directory')").fetchone()
+    assert Path(setting) == temp
+
+
+def test_a_spilling_query_writes_nothing_beside_the_scanned_file(tmp_path: Path) -> None:
+    """V-01: DuckDB's default temp directory is ``<database path>.tmp``, beside the scanned file."""
+    scanned = tmp_path / "scanned"
+    scanned.mkdir()
+    db = scanned / "spill.duckdb"
+    duckdb.connect(str(db)).close()
+    temp = tmp_path / "cache" / "tmp" / "99"
+    beside: set[str] = set()
+    in_temp: set[str] = set()
+    stop = threading.Event()
+
+    def watch() -> None:
+        while not stop.is_set():
+            beside.update(entry.name for entry in scanned.iterdir())
+            try:
+                in_temp.update(entry.name for entry in temp.iterdir())
+            except OSError:  # not created yet
+                pass
+            time.sleep(0.005)
+
+    watcher = threading.Thread(target=watch)
+    watcher.start()
+    try:
+        config = QueryConfig(memory_limit_mb=64, threads=2, temp_dir=str(temp), timeout_s=120)
+        sql = "select count(*) from (select hash(i) h from range(30000000) t(i) order by h)"
+        assert run_query(db, sql, config).rows == [(30_000_000,)]
+    finally:
+        stop.set()
+        watcher.join()
+    assert beside == {"spill.duckdb"}
+    assert any(name.startswith("duckdb_temp_storage") for name in in_temp), in_temp
 
 
 # ---------------------------------------------------------------- run_query
@@ -259,6 +316,47 @@ def test_timeout_also_covers_fetching_a_streaming_result(qdb: Path) -> None:
     assert caught.value.kind == "timeout"
 
 
+def test_a_timeout_while_fetching_text_and_lists_is_a_timeout(qdb: Path) -> None:
+    """V-02: an interrupt during the fetch of VARCHAR or list columns is not an ``sql`` error."""
+    sql = (
+        "select a.i, 'row ' || b.i::VARCHAR, [a.i, b.i] "
+        "from range(100000) a(i), range(100000) b(i)"
+    )
+    for _ in range(5):
+        with pytest.raises(QueryError) as caught:
+            run_query(qdb, sql, QueryConfig(timeout_s=0.3), max_rows=5_000_000_000)
+        assert caught.value.kind == "timeout", caught.value
+
+
+def test_ctrl_c_interrupts_the_query_instead_of_waiting_for_it(qdb: Path) -> None:
+    """V-04: a KeyboardInterrupt during the wait must interrupt the running query."""
+    started = time.perf_counter()
+    timer = threading.Timer(0.5, _thread.interrupt_main)
+    with open_readonly(qdb, QueryConfig()) as con:
+        timer.start()
+        try:
+            with pytest.raises(KeyboardInterrupt):
+                query._with_timeout(con, lambda: con.execute(CROSS_JOIN).fetchall(), 120)
+        finally:
+            timer.cancel()
+        assert con.execute("select 1").fetchone() == (1,)  # the connection is still usable
+    assert time.perf_counter() - started < 20
+
+
+@pytest.mark.parametrize(
+    "echoed",
+    ["read-only mode", "no such file", "configuration has been locked",
+     "disabled by configuration"],
+)
+def test_text_echoed_from_the_sql_cannot_set_the_kind(
+    qdb: Path, cfg: QueryConfig, echoed: str
+) -> None:
+    """V-06: the exception type decides before the wording."""
+    with pytest.raises(QueryError) as caught:
+        run_query(qdb, f"select '{echoed}'::INTEGER", cfg)
+    assert caught.value.kind == "sql", caught.value
+
+
 def test_the_connection_is_closed_after_an_error(qdb: Path, cfg: QueryConfig) -> None:
     """A different config for the same file only opens when no connection is left (D-021)."""
     with pytest.raises(QueryError):
@@ -301,6 +399,21 @@ def test_classify_error() -> None:
         (duckdb.InvalidInputException("bad value"), "sql"),
         (duckdb.IOException("disk"), "other"),
         (RuntimeError("boom"), "other"),
+        # V-02: an interrupted fetch can arrive wrapped in another exception type
+        (duckdb.InvalidInputException("Invalid Input Error: x INTERRUPT Error: Interrupted!"),
+         "timeout"),
+        # V-06: the type decides before the wording
+        (duckdb.ConversionException("Could not convert string 'read-only mode' to INT32"), "sql"),
+        (duckdb.InvalidInputException(
+            'Invalid Input Error: Cannot execute statement of type "INSERT" on database "a" '
+            "which is attached in read-only mode!"), "read_only"),
+        (duckdb.InvalidInputException(
+            'Invalid Input Error: Cannot change configuration option "threads" - the '
+            "configuration has been locked"), "blocked"),
+        (duckdb.IOException('IO Error: Cannot open database "x" in read-only mode: database '
+                            "does not exist"), "other"),
+        (duckdb.InvalidInputException('Cannot open database "x" in read-only mode: database '
+                                      "does not exist"), "other"),
     ]  # fmt: skip
     for exc, kind in cases:
         assert classify_error(exc).kind == kind, (exc, kind)

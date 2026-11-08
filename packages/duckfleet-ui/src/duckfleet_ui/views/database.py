@@ -28,15 +28,18 @@ CURRENT = "current"
 # ---------------------------------------------------------------- helpers
 
 
-def _file_state(info: dict[str, Any]) -> str:
-    """``missing``, ``changed`` (size or mtime differ from the scan) or ``current``."""
+def _file_state(info: dict[str, Any]) -> tuple[str, tuple[int, int] | None]:
+    """``(state, live (size, mtime_ns))``: ``missing``, ``changed`` (differs from the scan) or
+    ``current``. The live values key the preview cache (V-05), not the catalog row's.
+    """
     try:
         stat = Path(info["abs_path"]).stat()
     except OSError:
-        return MISSING
-    if stat.st_size != info["size_bytes"] or stat.st_mtime_ns != info["mtime_ns"]:
-        return CHANGED
-    return CURRENT
+        return MISSING, None
+    live = (stat.st_size, stat.st_mtime_ns)
+    if live != (info["size_bytes"], info["mtime_ns"]):
+        return CHANGED, live
+    return CURRENT, live
 
 
 def _header(info: dict[str, Any], state: str) -> None:
@@ -140,6 +143,8 @@ def _summary_tab(
         if st.button("Compute summary", key=f"compute_summary|{info['rel_path']}|{schema}.{table}"):
             with st.spinner("Computing the summary..."):
                 summary = queries.compute_summary(*args, row_count)
+            if not summary.error:
+                st.rerun()  # the button now reads "Recompute" (V-09); a failure stays on screen
     elif st.button("Recompute", key=f"recompute_summary|{info['rel_path']}|{schema}.{table}"):
         with st.spinner("Computing the summary..."):
             summary = queries.compute_summary(*args, row_count)
@@ -148,10 +153,10 @@ def _summary_tab(
 
 
 def _preview_tab(
-    info: dict[str, Any], schema: str, table: str, column_names: list[str], row_count: int | None,
-    available: bool,
+    info: dict[str, Any], live: tuple[int, int] | None, schema: str, table: str,
+    column_names: list[str], row_count: int | None, available: bool,
 ) -> None:  # fmt: skip
-    if not available:
+    if not available or live is None:
         st.info("The database file is missing; the preview needs the file.")
         return
     config = queries.query_config()
@@ -180,7 +185,7 @@ def _preview_tab(
     offset = (int(page) - 1) * config.preview_rows
     try:
         frame, more, as_text, elapsed = queries.preview_page(
-            info["abs_path"], info["size_bytes"], info["mtime_ns"], schema, table,
+            info["abs_path"], live[0], live[1], schema, table,
             tuple(chosen), None if sort_by == "(none)" else sort_by, bool(descending),
             offset, config.preview_rows,
         )  # fmt: skip
@@ -206,7 +211,6 @@ def render() -> None:
 
     cache = common.cache_dir()
     common.init_state(cache)
-    common.keep(*common.KEPT_KEYS)
     st.title("Database")
 
     root = st.session_state.get("active_root")
@@ -225,7 +229,7 @@ def render() -> None:
     if not info:
         st.warning(f"{rel_path} is not in the catalog any more. Scan again.")
         return
-    state = _file_state(info)
+    state, live = _file_state(info)
     _header(info, state)
 
     if info["status"] != "ok":
@@ -248,7 +252,7 @@ def render() -> None:
 
     labels = [f"{s}.{t}" for s, t in zip(tables["schema_name"], tables["table_name"], strict=True)]
     common.keep_valid("selected_table", labels)
-    chosen = st.selectbox("Table", labels, key="selected_table")
+    chosen = st.selectbox("Table", labels, key="selected_table", persist_state="session")
     position = labels.index(chosen)
     schema, table = tables.loc[position, "schema_name"], tables.loc[position, "table_name"]
     row_count = tables.loc[position, "row_count"]
@@ -269,7 +273,7 @@ def render() -> None:
     with preview_tab:
         if preview_tab.open:
             _preview_tab(
-                info, schema, table, columns["column_name"].tolist(), row_count, available
+                info, live, schema, table, columns["column_name"].tolist(), row_count, available
             )
 
     if st.button("Open in SQL", key="open_in_sql", disabled=not available):

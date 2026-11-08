@@ -1,11 +1,11 @@
 """Access to the scanned databases for the Database and SQL pages.
 
 ``query_config()`` is resolved once per process (decision D-021): DuckDB refuses
-a second connection to the same file with another threads or memory setting, so
-the two pages share one ``QueryConfig`` and never expose those two fields.
-Summaries and preview pages are cached (Streamlit cache keyed by the database
-file's size and mtime, summaries also as JSON sidecars); ad-hoc SQL is never
-cached.
+a second connection to the same file with another threads, memory or temp
+directory setting, so the pages share one ``QueryConfig`` and never expose those
+fields. Summaries and preview pages are cached (Streamlit cache keyed by the
+database file's live size and mtime, summaries also as JSON sidecars); ad-hoc SQL
+is never cached.
 """
 
 from __future__ import annotations
@@ -22,6 +22,8 @@ import streamlit as st
 from duckfleet_core.query import QueryConfig, QueryResult, preview_table
 from duckfleet_core.store import SummaryStore
 from duckfleet_core.summary import TableSummary
+from duckfleet_core.tempdir import process_temp_dir
+from duckfleet_ui import common
 
 ENV_QUERY_THREADS = "DUCKFLEET_QUERY_THREADS"
 ENV_QUERY_MEMORY_MB = "DUCKFLEET_QUERY_MEMORY_MB"
@@ -44,9 +46,14 @@ def _env_int(name: str) -> int | None:
 
 @functools.lru_cache(maxsize=1)
 def query_config() -> QueryConfig:
-    """The process-wide ``QueryConfig`` (optional overrides from the environment)."""
+    """The process-wide ``QueryConfig`` (optional overrides from the environment).
+
+    DuckDB's temp directory is ``<cache dir>/tmp/<pid>``, never beside a scanned file (V-01).
+    """
     return QueryConfig(
-        threads=_env_int(ENV_QUERY_THREADS), memory_limit_mb=_env_int(ENV_QUERY_MEMORY_MB)
+        threads=_env_int(ENV_QUERY_THREADS),
+        memory_limit_mb=_env_int(ENV_QUERY_MEMORY_MB),
+        temp_dir=str(process_temp_dir(common.cache_dir())),
     )
 
 
@@ -110,7 +117,8 @@ def preview_page(
 ) -> tuple[pd.DataFrame, bool, list[str], float]:
     """One preview page as ``(frame, more rows follow, columns shown as text, seconds)``.
 
-    ``size_bytes`` and ``mtime_ns`` only key the cache. Raises ``QueryError``.
+    ``size_bytes`` and ``mtime_ns`` only key the cache: pass the file's live values, so a file
+    that changed after the scan is read again (V-05). Raises ``QueryError``.
     """
     result = preview_table(
         abs_path,

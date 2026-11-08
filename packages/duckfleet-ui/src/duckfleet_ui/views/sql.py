@@ -185,7 +185,6 @@ def render() -> None:
 
     cache = common.cache_dir()
     common.init_state(cache)
-    common.keep(*common.KEPT_KEYS)
     config = queries.query_config()
     st.session_state.setdefault("sql_max_rows", config.max_rows)
     st.session_state.setdefault("sql_timeout", int(config.timeout_s))
@@ -221,22 +220,36 @@ def render() -> None:
         st.warning("The file is missing since the last scan. Rescan on the Overview page.")
 
     _schema(path, mtime, rel_path)
-    st.text_area("SQL", key="sql_text", height=220, placeholder="SELECT * FROM ...")
-    with st.expander("Options"):
-        left, right = st.columns(2)
-        left.number_input(
-            "Max rows shown", min_value=MIN_ROWS, max_value=MAX_ROWS, step=100, key="sql_max_rows"
-        )
-        right.number_input(
-            "Timeout (seconds)",
-            min_value=MIN_TIMEOUT_S,
-            max_value=MAX_TIMEOUT_S,
-            step=1,
-            key="sql_timeout",
-        )
-    run_col, clear_col, _ = st.columns([1, 1, 6])
-    run = run_col.button("Run", type="primary", disabled=not available)
-    clear_col.button("Clear", on_click=_clear)
+    st.text_area(
+        "SQL",
+        key="sql_text",
+        height=220,
+        placeholder="SELECT * FROM ...",
+        persist_state="session",
+    )
+    # The options and Run share a form, so Run submits the typed option values with the click
+    # instead of racing their commit (V-10).
+    with st.form("sql", border=False):
+        with st.expander("Options"):
+            left, right = st.columns(2)
+            left.number_input(
+                "Max rows shown",
+                min_value=MIN_ROWS,
+                max_value=MAX_ROWS,
+                step=100,
+                key="sql_max_rows",
+                persist_state="session",
+            )
+            right.number_input(
+                "Timeout (seconds)",
+                min_value=MIN_TIMEOUT_S,
+                max_value=MAX_TIMEOUT_S,
+                step=1,
+                key="sql_timeout",
+                persist_state="session",
+            )
+        run = st.form_submit_button("Run", type="primary", disabled=not available)
+    st.button("Clear", on_click=_clear)
 
     sql = st.session_state.get("sql_text", "")
     if run:
@@ -261,7 +274,13 @@ def render() -> None:
         _show_result(result)
         if "frame" in result:
             st.markdown("**Download** (runs the query in the editor again, up to the row limit)")
-            can_export = available and bool(sql.strip())
+            differs = bool(sql.strip()) and sql != result["sql"]
+            if differs:  # V-12: what would be exported is not what the grid shows
+                st.caption(
+                    "The editor text differs from the query behind the result above. "
+                    "Press Run first; downloads export the query that produced the result."
+                )
+            can_export = available and bool(sql.strip()) and not differs
             csv_col, parquet_col, _ = st.columns([1, 1, 6])
             if csv_col.button("Prepare CSV", disabled=not can_export):
                 _prepare(info, sql, "csv")

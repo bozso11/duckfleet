@@ -33,7 +33,9 @@ import duckdb
 import psutil
 from pydantic import BaseModel, Field
 
+from duckfleet_core.config import default_cache_dir
 from duckfleet_core.sqlutil import qualified_name, quote_ident
+from duckfleet_core.tempdir import ensure_temp_dir, process_temp_dir
 
 T = TypeVar("T")
 
@@ -41,6 +43,7 @@ _MAX_THREADS = 4
 _MAX_MEMORY_MB = 4096  # TUNING(query-resources)
 _MIN_MEMORY_MB = 512
 _MESSAGE_LIMIT = 1_000
+_POLL_S = 0.25  # wait slice of the timeout watcher
 
 ErrorKind = Literal["sql", "read_only", "blocked", "timeout", "other"]
 
@@ -57,6 +60,9 @@ class QueryConfig(BaseModel):
     preview_max_columns: int = Field(default=50, ge=1)  # L-15
     stats_row_threshold: int = 20_000_000  # L-05, TUNING(stats-threshold)
     stats_sample_rows: int = 1_000_000  # L-06, TUNING(stats-threshold)
+    # DuckDB's temp directory (V-01, D-034): None means <default cache>/tmp/<pid>; the CLI and
+    # the UI pass <their cache dir>/tmp/<pid>. Part of the one-config-per-process rule (D-021).
+    temp_dir: str | None = None
 
     def resolved_threads(self) -> int:
         """``threads``, or ``min(4, cpu_count)`` when unset."""
@@ -72,6 +78,12 @@ class QueryConfig(BaseModel):
             return self.memory_limit_mb
         total_mb = psutil.virtual_memory().total // (1024 * 1024)
         return max(_MIN_MEMORY_MB, min(_MAX_MEMORY_MB, total_mb // 4))
+
+    def resolved_temp_dir(self) -> Path:
+        """``temp_dir``, or ``<default cache dir>/tmp/<pid>`` when unset."""
+        if self.temp_dir:
+            return Path(self.temp_dir)
+        return process_temp_dir(default_cache_dir())
 
 
 class QueryError(Exception):
@@ -101,13 +113,21 @@ class QueryResult:
 
 
 def connection_config(config: QueryConfig) -> dict[str, Any]:
-    """The connect ``config`` of every connection to a scanned file (decision D-021)."""
+    """The connect ``config`` of every connection to a scanned file (decisions D-021, D-034).
+
+    ``temp_directory`` is created here, before connecting; without it DuckDB would spill
+    into ``<database path>.tmp`` beside the scanned file (review V-01). The key order matters
+    (see the comment below).
+    """
     return {
         "threads": config.resolved_threads(),
         "memory_limit": f"{config.resolved_memory_limit_mb()}MB",
         "autoinstall_known_extensions": False,
         "autoload_known_extensions": False,
         "enable_external_access": False,
+        # DuckDB applies the options in this order and refuses to change the temp directory once
+        # external access is off, so this key must stay after "enable_external_access".
+        "temp_directory": ensure_temp_dir(config.resolved_temp_dir()),
         "lock_configuration": True,
     }
 
@@ -127,16 +147,17 @@ def open_readonly(
 # ---------------------------------------------------------------- errors
 
 
-# Case-insensitive substrings of DuckDB's messages, checked in this order (plan 3.3).
+# Case-insensitive substrings of DuckDB's messages (plan 3.3). The exception type decides first
+# (review V-06), so text echoed from the user's SQL cannot set the kind: only an
+# InvalidInputException is looked at for its wording.
 _MISSING = ("database does not exist", "no such file")  # "Cannot open ... in read-only mode: ..."
-_READ_ONLY = ("read-only mode",)
 _BLOCKED = ("disabled by configuration", "configuration has been locked", "extensions is disabled")
+_INTERRUPTED = "interrupt error"  # DuckDB's label: "INTERRUPT Error: Interrupted!"
 _SQL_EXCEPTIONS = (
     duckdb.ParserException,
     duckdb.BinderException,
     duckdb.CatalogException,
     duckdb.ConversionException,
-    duckdb.InvalidInputException,
 )
 
 
@@ -147,14 +168,23 @@ def classify_error(exc: BaseException) -> QueryError:
     text = str(exc) or type(exc).__name__
     lower = text.lower()
     kind: ErrorKind
-    if isinstance(exc, duckdb.InterruptException):
-        kind = "timeout"
-    elif any(s in lower for s in _MISSING):
-        kind = "other"  # opening a missing file also mentions read-only mode
-    elif any(s in lower for s in _READ_ONLY):
-        kind = "read_only"
-    elif any(s in lower for s in _BLOCKED):
+    if isinstance(exc, duckdb.InterruptException) or (
+        isinstance(exc, duckdb.Error) and _INTERRUPTED in lower
+    ):
+        kind = "timeout"  # a fetch interrupted mid-stream may arrive as an InvalidInputException
+    elif isinstance(exc, duckdb.PermissionException):
         kind = "blocked"
+    elif isinstance(exc, duckdb.InvalidInputException):
+        if any(s in lower for s in _MISSING):
+            kind = "other"  # opening a missing file also mentions read-only mode
+        elif lower.startswith("invalid input error: cannot execute statement") or (
+            "read-only mode" in lower
+        ):
+            kind = "read_only"
+        elif any(s in lower for s in _BLOCKED):
+            kind = "blocked"
+        else:
+            kind = "sql"
     elif isinstance(exc, _SQL_EXCEPTIONS):
         kind = "sql"
     else:
@@ -176,23 +206,50 @@ def as_query_errors() -> Iterator[None]:
 # ---------------------------------------------------------------- timeout
 
 
+def _wait(future: concurrent.futures.Future, timeout_s: float) -> bool:
+    """Wait up to ``timeout_s`` for ``future``; ``True`` when it finished.
+
+    Waits in short slices: on Windows a lock wait is not interrupted by Ctrl-C, so one long wait
+    would only deliver the ``KeyboardInterrupt`` when it ends (V-04).
+    """
+    deadline = time.monotonic() + timeout_s
+    while True:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            return future.done()
+        done, _pending = concurrent.futures.wait([future], timeout=min(_POLL_S, remaining))
+        if done:
+            return True
+
+
 def _with_timeout(con: duckdb.DuckDBPyConnection, fn: Callable[[], T], timeout_s: float) -> T:
-    """Run ``fn`` (which uses ``con``) in a worker thread; interrupt ``con`` after ``timeout_s``."""
+    """Run ``fn`` (which uses ``con``) in a worker thread; interrupt ``con`` after ``timeout_s``.
+
+    After an interrupt every DuckDB error of the worker is a timeout (V-02): a fetch that is
+    interrupted mid-stream does not always raise ``InterruptException``. A ``KeyboardInterrupt``
+    (or any other ``BaseException``) while waiting interrupts the query too (V-04), so
+    ``shutdown(wait=True)`` returns at once instead of waiting for the whole query.
+    """
     executor = concurrent.futures.ThreadPoolExecutor(
         max_workers=1, thread_name_prefix="duckfleet-query"
     )
     try:
         future = executor.submit(fn)
         try:
-            return future.result(timeout=timeout_s)
-        except concurrent.futures.TimeoutError:
+            if _wait(future, timeout_s):
+                return future.result()
             con.interrupt()
             try:
                 return future.result()  # the thread ends once the interrupt is noticed
-            except duckdb.InterruptException:
+            except duckdb.Error:
                 raise QueryError(
                     "timeout", f"the query ran longer than {timeout_s:g} s and was interrupted"
                 ) from None
+        except Exception:
+            raise  # an error (or the timeout above): nothing is left running that needs stopping
+        except BaseException:  # KeyboardInterrupt and friends while waiting
+            con.interrupt()
+            raise
     finally:
         executor.shutdown(wait=True)
 

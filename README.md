@@ -33,6 +33,8 @@ uv run duckfleet-ui                        # Streamlit app
    `report` (its `rel_path`) and, for the last two, `SCHEMA.TABLE`. They open
    the database read-only: no writes, no file access, no extensions. Output is
    a text table, CSV or JSON (`--format`); exit code 3 means a query error.
+   CSV and JSON are always UTF-8; the text table uses the console encoding,
+   so set `PYTHONUTF8=1` on Windows to see every character in it.
    Summaries are cached next to the scan profiles until the file changes.
 3. `duckfleet-ui` opens the Overview page: enter a root folder in the
    sidebar, press **Scan** (the page waits behind a progress bar) or **Load

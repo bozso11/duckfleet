@@ -158,6 +158,9 @@ def test_summary_is_computed_on_request_and_cached(pointed_at) -> None:
 
     at.button(key=f"compute_summary|{key}").click().run()
     assert not at.exception, [e.value for e in at.exception]
+    # V-09: the run that computed the summary already offers "Recompute"
+    assert "Compute summary" not in [b.label for b in at.button]
+    assert "Recompute" in [b.label for b in at.button]
     summary = frame_with(at, "approx_unique")
     assert summary["column_name"].tolist() == ["ts", "value", "run_id"]
     assert summary["count"].tolist() == [1000, 1000, 1000]
@@ -186,6 +189,8 @@ def test_a_failing_summary_shows_the_error_and_is_not_reused(
     at.button(key=f"compute_summary|{key}").click().run()
     assert not at.exception, [e.value for e in at.exception]
     assert any("The summary failed: timeout:" in e.value for e in at.error)
+    # V-09: no rerun after a failure, so the error stays on screen and the button stays
+    assert f"compute_summary|{key}" in [b.key for b in at.button]
     again = run_app(SLOW_DB, "main.slow", tab="Summary")  # the error is not served from the cache
     assert f"compute_summary|{key}" in [b.key for b in again.button]
 
@@ -200,6 +205,33 @@ def test_preview_shows_the_first_page(pointed_at) -> None:
     assert len(preview) == 1000
     note = " ".join(str(c.value) for c in at.caption)
     assert "rows 1 to 1,000 of 1,000" in note
+
+
+def test_preview_shows_rows_added_after_the_scan(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """V-05: the preview cache is keyed by the file's live size and mtime, not the scan's."""
+    fleet, cache = build_fleet(tmp_path)
+    monkeypatch.setenv("DUCKFLEET_ROOT", str(fleet))
+    monkeypatch.setenv("DUCKFLEET_CACHE_DIR", str(cache))
+    rel_path = "exp_01/run_02/metrics.duckdb"
+    key = sig(rel_path, "main.events")
+    at = run_app(rel_path, table="main.events", tab="Preview")
+    at.selectbox(key=f"preview_sort|{key}").select("ts")
+    at.checkbox(key=f"preview_desc|{key}").check()
+    at.run()
+    assert not at.exception, [e.value for e in at.exception]
+    before = next(f for f in frames(at) if list(f.columns) == ["ts", "value", "run_id"])
+    assert len(before) == 1000 and 42.0 not in before["value"].tolist()
+
+    con = duckdb.connect(str(fleet / rel_path))
+    con.execute("INSERT INTO events VALUES (TIMESTAMP '2030-01-01 00:00:00', 42.0, 2)")
+    con.close()
+    at.run()  # the same session, the same widgets: only the file changed
+    assert not at.exception, [e.value for e in at.exception]
+    after = next(f for f in frames(at) if list(f.columns) == ["ts", "value", "run_id"])
+    assert after["value"][0] == 42.0  # newest first: the new row is on top
+    assert any("Changed since the last scan" in str(c.value) for c in at.caption)
 
 
 def test_preview_page_two_sorted_descending(pointed_at, monkeypatch: pytest.MonkeyPatch) -> None:

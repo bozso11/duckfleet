@@ -5,7 +5,7 @@ happens beyond it. Numbers marked (TBC) are proposals. The v0.1 and v0.2
 acceptance runs used the demo fleet only, so they stay (TBC) until a real
 fleet has been scanned.
 
-Last updated: 2026-11-06 (0.2.0).
+Last updated: 2026-11-08 (0.2.1).
 
 | ID | Limit | Default | Config | Beyond the limit | Since |
 |---|---|---|---|---|---|
@@ -22,7 +22,7 @@ Last updated: 2026-11-06 (0.2.0).
 | L-11 | Points per chart | 50 k after bucketing (TBC) | | bucket aggregates (mean, min, max) | v0.3 |
 | L-12 | Databases attached at once | 50 (TBC) | | pick a subset | v0.4 |
 | L-13 | Recent roots remembered | 20 | | oldest dropped | v0.1 |
-| L-14 | Query timeout (SQL page, preview, summary, CLI) | 60 s (page option 1 to 3,600 s) (TBC) | `QueryConfig.timeout_s` | the query is interrupted and reported as `timeout`; the connection stays usable (D-024) | v0.2 |
+| L-14 | Query timeout (SQL page, preview, summary, CLI) | 60 s (page option 1 to 3,600 s) (TBC) | `QueryConfig.timeout_s` | the query is interrupted and reported as `timeout`; the connection stays usable (D-024). A phase that never checks the interrupt (one huge allocation, the Arrow conversion of an export) can delay the stop; it is bounded and was never a hang in testing | v0.2 |
 | L-15 | Preview columns shown by default | 50 (TBC) | `QueryConfig.preview_max_columns` | the rest selectable in the multiselect | v0.2 |
 | L-16 | Per-column summary (`SUMMARIZE`) | exact up to L-05 rows, sampled above with L-06 rows | `QueryConfig.stats_row_threshold`, `stats_sample_rows` | `sampled=True` in the summary caption | v0.2 |
 | L-17 | Query connection threads and memory | `min(4, cpu_count)` threads, `min(4 GB, RAM/4)` memory, floor 512 MB (TBC) | `QueryConfig.threads`, `memory_limit_mb`, env `DUCKFLEET_QUERY_THREADS`, `DUCKFLEET_QUERY_MEMORY_MB` | resolved once per process (D-021); DuckDB spills or fails the query at the memory limit | v0.2 |
@@ -116,5 +116,21 @@ Last updated: 2026-11-06 (0.2.0).
 22. **Summaries of views.** `SUMMARIZE` of a view runs the view's query and is
     not sampled (the row count of a view is unknown); it can reach the timeout.
 23. **One query config per process.** `DUCKFLEET_QUERY_THREADS` and
-    `DUCKFLEET_QUERY_MEMORY_MB` are read once when the first query runs;
-    restart `duckfleet-ui` to change them.
+    `DUCKFLEET_QUERY_MEMORY_MB` are read at the first `query_config()` call
+    (the first render of the SQL page or of the Preview tab), not when the
+    first query runs; restart `duckfleet-ui` to change them.
+24. **DuckDB temp directory (0.2.1).** Every connection duckfleet opens uses
+    `<cache dir>/tmp/<pid>` as DuckDB's `temp_directory`; without it DuckDB
+    would spill into `<database path>.tmp` beside the scanned file (D-034).
+    The folder is created before connecting and removed when the process
+    exits; `scan` removes folders of processes that no longer exist. A query
+    that needs more than the memory limit spills into that folder, so the
+    cache drive needs free space for it.
+25. **Preview cache (0.2.1).** Preview pages are cached by the Streamlit
+    cache, keyed by the database file's current size and mtime, so a file that
+    changed after the scan shows its new rows (the header says it changed).
+    Edits that keep both size and mtime are not noticed. Entries: 64 pages.
+26. **CLI text encoding on Windows.** `--format csv` and `json` are written
+    as UTF-8 with LF line ends whatever the console code page. `--format
+    table` uses the console encoding and replaces characters it cannot show
+    with `?`; set `PYTHONUTF8=1` (or use another format) to see them.

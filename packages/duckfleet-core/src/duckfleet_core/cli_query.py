@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import csv
 import json
+import math
 import sys
 from collections.abc import Callable, Sequence
 from pathlib import Path
@@ -21,6 +22,7 @@ from duckfleet_core.config import ScanConfig
 from duckfleet_core.query import QueryConfig, QueryError, QueryResult, preview_table, run_query
 from duckfleet_core.store import ProfileStore, SummaryStore
 from duckfleet_core.summary import TableSummary
+from duckfleet_core.tempdir import process_temp_dir
 
 EXIT_OK = 0
 EXIT_USAGE = 1
@@ -180,7 +182,9 @@ def _table(reader: CatalogReader, rel_path: str, text: str) -> dict[str, Any]:
 
 
 def _query_config(args: argparse.Namespace, **extra: Any) -> QueryConfig:
-    options = dict(extra)
+    # DuckDB's temp directory goes under the cache, never beside the scanned file (V-01).
+    cache_dir = ScanConfig(cache_dir=getattr(args, "cache_dir", None)).resolved_cache_dir()
+    options = {"temp_dir": str(process_temp_dir(cache_dir)), **extra}
     if getattr(args, "timeout", None):
         options["timeout_s"] = args.timeout
     return QueryConfig(**options)
@@ -222,21 +226,64 @@ def _unique_names(columns: Sequence[str]) -> list[str]:
     return names
 
 
+def _json_value(value: Any) -> Any:
+    """JSON-safe copy of a fetched value: NaN and infinities become null, bytes hex text.
+
+    ``json.dumps(allow_nan=False)`` raises on a float before it ever calls ``default``, so the
+    values are walked first (V-07). Tuples become lists; anything else unusual (datetime,
+    Decimal, UUID) is left to ``default=str``.
+    """
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if isinstance(value, bytes | bytearray | memoryview):
+        return bytes(value).hex()
+    if isinstance(value, list | tuple):
+        return [_json_value(item) for item in value]
+    if isinstance(value, dict):
+        return {str(key): _json_value(item) for key, item in value.items()}
+    return value
+
+
+def _dump_json(value: Any) -> str:
+    return json.dumps(_json_value(value), default=str, allow_nan=False, ensure_ascii=False)
+
+
+def _csv_value(value: Any) -> Any:
+    if value is None:
+        return ""
+    if isinstance(value, list | tuple | dict):
+        return _dump_json(value)  # arrays as JSON text, not as a Python tuple repr
+    return value
+
+
+def utf8_stdout() -> None:
+    """Write csv and json as UTF-8 with LF line ends whatever the console code page (V-03)."""
+    reconfigure = getattr(sys.stdout, "reconfigure", None)
+    if reconfigure is not None:
+        try:
+            reconfigure(encoding="utf-8", newline="")
+        except (ValueError, OSError):  # e.g. a stream that cannot change its encoding
+            pass
+
+
 def write_rows(result: QueryResult, fmt: str) -> None:
-    """Print a result as ``table``, ``csv`` or ``json`` (one object per line) on stdout."""
+    """Print a result as ``table``, ``csv`` or ``json`` (one object per line) on stdout.
+
+    ``csv`` and ``json`` are UTF-8 on every platform; ``table`` keeps the console encoding
+    (set ``PYTHONUTF8=1`` on Windows to see every character).
+    """
+    if fmt in ("csv", "json"):
+        utf8_stdout()
     if fmt == "csv":
         writer = csv.writer(sys.stdout, lineterminator="\n")
         writer.writerow(result.columns)
-        writer.writerows([["" if v is None else v for v in row] for row in result.rows])
+        writer.writerows([[_csv_value(v) for v in row] for row in result.rows])
     elif fmt == "json":
         names = _unique_names(result.columns)
         for row in result.rows:
-            print(json.dumps(dict(zip(names, row, strict=True)), default=str))
+            print(_dump_json(dict(zip(names, row, strict=True))))
     else:
-        if result.columns:
-            print(format_table(result.columns, result.rows))
-        else:
-            print("(no result set)")
+        print(format_table(result.columns, result.rows))
         if result.truncated:
             print("... (truncated)")
     if result.truncated and fmt != "table":

@@ -2,11 +2,70 @@
 
 ## Unreleased
 
-1. `docs/REVIEW_v0.2.md`: review of 0.2.0 against the plan (accepted; 12
-   confirmed defects, one a rule violation, to ship as 0.2.1).
-2. `docs/PLAN_v0.3.md`: detailed plan for 0.2.1 (Phase 0) and v0.3 (Plot
+1. `docs/PLAN_v0.3.md`: detailed plan for 0.2.1 (Phase 0) and v0.3 (Plot
    page, `duckfleet plot`, chart rules).
-3. Decisions D-031 to D-034; limits L-18 to L-21 added.
+2. Decisions D-032 to D-034 and limits L-18 to L-21 added for v0.3.
+
+## 0.2.1 (2026-11-08)
+
+Fixes from `docs/REVIEW_v0.2.md` (plan: Phase 0 of `docs/PLAN_v0.3.md`, decision
+D-031). The demo fleet and its scan numbers are unchanged.
+
+### Fixes, by review ID
+
+1. **V-01** (high): DuckDB's temp directory is `<cache dir>/tmp/<pid>` on every
+   connection duckfleet opens (query layer, profiler, catalog writer), no longer
+   `<database path>.tmp` beside the scanned file. The folder is per process,
+   created before connecting, removed at exit; `run_scan` removes folders of
+   processes that no longer exist. Found on the way: DuckDB refuses the temp
+   directory when `enable_external_access` is already off, so the key must come
+   after it in the config dict (D-035). Test: a spilling query with
+   `memory_limit_mb=64` while a thread lists the scanned folder.
+2. **V-02**: an interrupt during the fetch of VARCHAR or list columns is a
+   `timeout` (5 of 5 runs), not an `sql` error.
+3. **V-03**: `--format csv` and `json` are UTF-8 with LF line ends whatever the
+   console code page (tested through a subprocess with a latin-1 stdout);
+   `PYTHONUTF8=1` is documented for `table` (README, LIMITS 26).
+4. **V-04**: Ctrl-C during a query interrupts it; the timeout waits in 0.25 s
+   slices because a Windows lock wait is not interrupted by Ctrl-C.
+5. **V-05**: the Database page's preview cache is keyed by the file's live size
+   and mtime; a row inserted after the scan shows in the preview.
+6. **V-06**: `classify_error` decides by exception type first, so text echoed from
+   the SQL (`select 'read-only mode'::INTEGER`) is an `sql` error.
+7. **V-07**: JSON output has no `NaN` (null), BLOBs as hex, tuples as lists; CSV
+   renders arrays and structs as JSON text.
+8. **V-08**: the unreachable `(no result set)` branch is gone.
+9. **V-09**: the Summary tab shows "Recompute" in the run that computed the
+   summary (`st.rerun()` after a successful first compute only).
+10. **V-10**: on the SQL page the Options inputs and **Run** share a form, so Run
+    submits what was typed.
+11. **V-11**: `persist_state="session"` replaces `common.keep` / `KEPT_KEYS`
+    (every kept widget supports it, checkboxes included); a test visits the
+    three pages in turn against one session state.
+12. **V-12**: **Prepare CSV** and **Prepare Parquet** are disabled, with a
+    caption, while the editor text differs from the query behind the result.
+13. **P-05**: the profiler's connection has the query layer's sandbox
+    (external access off, configuration locked), threads and memory aside.
+14. **P-07**: the `get_or_compute` docstring is correct.
+
+### Tests added (review Section 6)
+
+Timeout during a VARCHAR/list fetch; nothing beside a scanned file under memory
+pressure; non-ASCII CLI output as bytes; a real cancellation test for P-02 (a
+marker file written inside the spawned workers counts the files that really
+ran: at most 8 of 20 after the consumer stops, 20 without `cancel_futures`); the
+catalog writer's config (R-07); a 2-worker run with a valid tag pattern that
+matches nothing (R-03); summaries of a nested-only table, a binary-only table
+and a view whose base table was dropped; the stale-folder sweep and the
+workers' own clean-up.
+
+### Documentation
+
+ARCHITECTURE (tempdir module, storage layout, shared config rule, UI state),
+LIMITS 23 (wording) and new 24 to 26, L-14 (interrupt delay, P-06), D-024
+wording and D-035, `# TUNING(timeline-padding)` marker and row, README
+(`PYTHONUTF8=1`). The CI result of the 0.2.0 commit below was confirmed green
+on both OSes afterwards (run 42218976791).
 
 ## 0.2.0 (2026-11-06)
 
@@ -34,8 +93,8 @@ Database deep dive and read-only SQL on top of the fleet overview (plan:
 
 1. [x] CI green on Windows and Linux for the 0.1.1 commit (`dbfd7bf`) and for
    every v0.2 phase commit (`adb4804`, `fe6ffea`, `506dcdf`, `5a742db`,
-   `2cbcb14`); the result for the 0.2.0 commit is in the GitHub Actions run of
-   that commit.
+   `2cbcb14`); the run of the 0.2.0 commit itself (42218976791) was green on both
+   OSes, confirmed after the entry was written.
 2. [x] Phase 0: the demo scan reports 16 walked, 13 candidates, 2 rejected, 10
    ok, 3 failed (`corrupt`, `corrupt`, `encrypted`), families unchanged (checked
    with the CLI on a fresh demo fleet); the `infinity` test passes

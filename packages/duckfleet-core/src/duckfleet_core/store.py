@@ -209,8 +209,10 @@ class SummaryStore:
     ) -> TableSummary:
         """The valid cached summary, or a fresh one (computed, saved and returned).
 
-        The validity check uses the file's current size and mtime. A failure is
-        returned (and saved) as a summary with ``error`` set; it is never reused.
+        The validity check uses the file's current size and mtime. A failed
+        computation is returned and saved as a summary with ``error`` set; it is
+        never reused. When the file cannot be ``stat``-ed the failure is returned
+        but not saved (there is no size or mtime to key it by) (P-07).
         """
         try:
             stat = Path(db_path).stat()
