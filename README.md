@@ -47,7 +47,7 @@ uv run duckfleet-ui                        # Streamlit app
    line (strategy, bucket width, points) goes to stderr, `--show-sql` adds the
    query. `make-demo --big` adds a table of 200,000 rows to try it on.
    `fleet-tables`, `fleet-sql` and `plot --databases/--family` work on several databases at once
-   (`--databases a,b`, `--family F1`, `--all`; at most 50): the members are attached read-only to one
+   (`--databases a,b`, repeatable; `--family F1`; `--all`; at most 50): the members are attached read-only to one
    in-memory connection with one union view per table (`events` holds the `events` rows of every
    member with a `database` column), so one query or one plot spans files. A member that cannot be
    attached (locked, encrypted, corrupt) is reported on stderr and the others still work. The scan

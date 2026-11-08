@@ -515,9 +515,12 @@ def _render_many(path: str, mtime: int, scope: scopes.Scope) -> None:
     except QueryError as error:
         _show_error(error.kind, error.message)
         return
-    warning = scopes.attach_warning([f.__dict__ for f in summary.failures])
-    if warning:
-        st.warning(warning)
+    for warning in (
+        scopes.attach_warning([f.__dict__ for f in summary.failures]),
+        scopes.view_warning(summary.view_failures),
+    ):
+        if warning:
+            st.warning(warning)
     if not summary.views:
         st.info("The chosen databases hold no tables or views.")
         return
@@ -551,7 +554,7 @@ def _render_many(path: str, mtime: int, scope: scopes.Scope) -> None:
         fetch=fetch,
         stem="fleet",
         default_color=view.label_column,
-        fleet=(len(summary.aliases), view.label_column),
+        fleet=(len(view.members), view.label_column),  # the databases that hold this table (X-11)
     )
 
 

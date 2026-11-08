@@ -166,3 +166,21 @@ def attach_warning(failures: list[Any]) -> str | None:
         else (f"{len(failures)} databases could not be attached and are left out:")
     )
     return head + "\n" + "\n".join(lines)
+
+
+def view_warning(view_failures: list[Any]) -> str | None:
+    """The text of the warning for views that could not be used, or ``None`` (review X-08).
+
+    ``view_failures`` are ``(schema.table, message)`` pairs of ``FleetSummary``: a member view
+    that does not bind (that member is left out of the union view) or a union view that could not
+    be built (the table is missing from the list).
+    """
+    if not view_failures:
+        return None
+    lines = [f"- {name}: {' '.join(str(message).split())[:300]}" for name, message in view_failures]
+    head = (
+        "1 view could not be used; the rows it would add are left out:"
+        if len(view_failures) == 1
+        else f"{len(view_failures)} views could not be used; the rows they would add are left out:"
+    )
+    return head + "\n" + "\n".join(lines)

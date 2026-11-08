@@ -5,7 +5,7 @@ happens beyond it. Numbers marked (TBC) are proposals. The v0.1 and v0.2
 acceptance runs used the demo fleet only, so they stay (TBC) until a real
 fleet has been scanned.
 
-Last updated: 2026-11-08 (0.4.0).
+Last updated: 2026-11-08 (0.4.1).
 
 | ID | Limit | Default | Config | Beyond the limit | Since |
 |---|---|---|---|---|---|
@@ -119,9 +119,11 @@ Last updated: 2026-11-08 (0.4.0).
 23. **One query config per process.** `DUCKFLEET_QUERY_THREADS` and
     `DUCKFLEET_QUERY_MEMORY_MB` are read at the first `query_config()` call, not
     when the first query runs. That call happens at the first render of the SQL
-    page, the first open Preview tab of the Database page, the first summary
-    computed there, or the first **Plot** press on the Plot page (the cached
-    preview and plot functions call it); restart `duckfleet-ui` to change them.
+    page (in either scope), the first render of the Plot page in scope several
+    databases (the table list opens a fleet connection), the first open Preview
+    tab of the Database page, the first summary computed there, or the first
+    **Plot** press on the Plot page in scope one database (the cached preview and
+    plot functions call it); restart `duckfleet-ui` to change them.
 24. **DuckDB temp directory (0.2.1, one folder per file since 0.3.1).** Every
     connection duckfleet opens uses a folder under `<cache dir>/tmp/<pid>` as
     DuckDB's `temp_directory`: `<pid>/<sha1(absolute path)[:16]>`, one leaf per
@@ -163,8 +165,10 @@ Last updated: 2026-11-08 (0.4.0).
     calendar months or years. A temporal x is shown as naive UTC
     (`TIMESTAMP WITH TIME ZONE` is converted, `DATE` becomes midnight).
 31. **Plot cache.** Plot data is cached by the Streamlit cache (16 entries),
-    keyed by the file's current size and mtime and the spec; a file that
-    changes without a new size or mtime is not noticed.
+    keyed by the file's current size and mtime and the spec; in scope several
+    databases (16 entries of its own) by the rel_paths, the live size and mtime of
+    every chosen file and the spec. A file that changes without a new size or mtime
+    is not noticed.
 32. **Chart theme after a theme change (0.3.1, P-09).** The Plot page reads
     Streamlit's theme (`st.context.theme.type`) on every run; it may be wrong on
     the first load and right after the user changes the theme, and the chart then
@@ -185,11 +189,34 @@ Last updated: 2026-11-08 (0.4.0).
     beyond `CREATE TEMP TABLE`; `ATTACH`, `COPY TO`, `read_csv`, `INSTALL`, `LOAD` and `SET`
     are refused as `blocked`, writes as `read_only`. Each request opens and closes its own
     connection with its own temp folder, so the attach cost (about 0.01 s for 8 files) is
-    paid per query.
+    paid per query; the SQL page in scope several databases opens one more connection on
+    every rerun for the Schema expander (P-14, D-047), a cost that could show with 50 members
+    on a slow drive and is accepted. A member whose alias equals a schema name that the
+    union views are created in (`s.duckdb` next to a file holding a schema `s`) is attached
+    under `<alias>_2`, `_3`, ... before the lockdown (0.4.1, X-05), so the alias shown in the
+    Schema expander can differ from the rule of the file name alone; a file named `main`,
+    `system`, `temp` or `memory` gets the suffix as well (X-02). A member view whose base
+    table is gone, or that does not bind for any other reason, is left out of the union view
+    of that name and reported as a view failure (a warning on the SQL and Plot pages, stderr
+    in the CLI); the view still exists, broken, under its own alias (X-03). `--databases`
+    splits on commas: a rel_path that contains one is chosen by repeating the option or by
+    giving it alone as the whole value (P-12).
 35. **Content hashes (0.4).** Tables of up to 10,000 rows are hashed as the sorted rows
     printed by DuckDB, so two tables are identical when their column names, the order of
     the columns and the printed values agree; a type counts only through its printed form
     (INTEGER 1 and VARCHAR '1' print alike, INTEGER 1 and DOUBLE 1.0 do not). The row order
     does not matter, duplicate rows do. An empty table is `empty` whatever its columns. The
-    upgrade to 0.4 re-profiles every file once (profile schema version 2).
+    upgrade to 0.4 re-profiles every file once (profile schema version 2). The row is
+    referenced through an alias that is no column of the table (`df_row`, else `df_row_2`,
+    ...); 0.4.0 used `df_row` always, so a table with a column of that name was hashed on
+    that column only, and its cached hash stays wrong until the file is profiled again
+    (`--full`, or any change of the file); the profile schema version was not raised for
+    this (D-050).
+36. **Older catalogs (0.4.1).** A catalog written before 0.4 has no `tables.content_hash`.
+    `CatalogReader.content_variants()` checks the catalog's columns once and raises
+    `CatalogOutdatedError` (`older catalog: ... run duckfleet scan`); the Overview shows it
+    as an info in the Identical content section and everything else works, `report` prints
+    it and exits 2. Run `duckfleet scan` (the first scan re-profiles every file, item 35).
+    The catalog reader's own DuckDB temp folder is the catalog's leaf under
+    `<cache>/tmp/<pid>` (P-13).
 

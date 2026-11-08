@@ -1,11 +1,14 @@
 """CLI commands on several databases at once: ``fleet-tables`` and ``fleet-sql`` (plan v0.4).
 
-The databases are chosen with ``--databases a,b`` (rel_paths as listed by ``duckfleet report``),
-``--family F1`` (a strict family ``F1``... or a loose one ``L1``...) or ``--all`` (every database
-of the catalog, also those whose last scan failed: attaching them shows why); without one of
-them the default is ``--all``. More than 50 databases (L-12, L-22) is a usage error. The paths
-come from the catalog. A member that cannot be attached is reported on stderr and the others
-work; ``fleet-sql`` runs on the fleet connection of ``duckfleet_core.fleet`` with its union views.
+The databases are chosen with ``--databases a,b`` (rel_paths as listed by ``duckfleet report``;
+repeat the option for more, and a value that is exactly one rel_path is taken whole, so a
+rel_path with a comma in it can be chosen, review P-12), ``--family F1`` (a strict family
+``F1``... or a loose one ``L1``...) or ``--all`` (every database of the catalog, also those
+whose last scan failed: attaching them shows why); without one of them the default is
+``--all``. More than 50 databases (L-12, L-22) is a usage error. The paths come from the
+catalog. A member that cannot be attached is reported on stderr and the others work, also when
+the query fails (review X-06); ``fleet-sql`` runs on the fleet connection of
+``duckfleet_core.fleet`` with its union views.
 
 Exit codes as ``sql``: 0 ok, 1 usage, 2 fatal, 3 query error.
 """
@@ -31,6 +34,7 @@ from duckfleet_core.cli_query import (
 )
 from duckfleet_core.fleet import (
     MAX_MEMBERS,
+    FleetQueryError,
     FleetSelection,
     FleetSummary,
     describe_fleet,
@@ -43,7 +47,11 @@ def add_selection_options(parser: argparse.ArgumentParser, *, with_all: bool = T
     """``--databases``, ``--family`` and (optionally) ``--all`` on a sub-parser."""
     group = parser.add_mutually_exclusive_group()
     group.add_argument(
-        "--databases", metavar="A,B,...", help="comma separated rel_paths of the databases"
+        "--databases",
+        action="append",
+        metavar="A,B,...",
+        help="comma separated rel_paths of the databases; repeatable (a value that is exactly "
+        "one rel_path is taken whole, also when it contains a comma)",
     )
     group.add_argument(
         "--family", metavar="F1", help="all members of a schema family (F1, L1, ...)"
@@ -82,7 +90,12 @@ def add_parsers(sub: Any) -> None:
 # ---------------------------------------------------------------- the selection
 
 
-def _split(text: str) -> list[str]:
+def _split(text: str, known: set[str] | None = None) -> list[str]:
+    """The rel_paths of one ``--databases`` value: the value itself when it is a known rel_path
+    (it may contain commas), else its comma separated parts."""
+    whole = _clean_rel_path(text)
+    if known is not None and whole in known:
+        return [whole]
     return [_clean_rel_path(part) for part in text.split(",") if part.strip()]
 
 
@@ -103,7 +116,8 @@ def resolve_selection(
     databases = getattr(args, "databases", None)
     family = getattr(args, "family", None)
     if databases is not None:
-        chosen = list(dict.fromkeys(_split(databases)))
+        known = set(by_rel)
+        chosen = list(dict.fromkeys(rel for text in databases for rel in _split(text, known)))
         if not chosen:
             raise CliFailure(EXIT_USAGE, "--databases needs at least one rel_path")
         unknown = [rel for rel in chosen if rel not in by_rel]
@@ -187,9 +201,13 @@ def cmd_fleet_sql(args: argparse.Namespace) -> int:
     _store, reader = _catalog(args)
     selection, paths, _rows = resolve_selection(reader, args)
     extra = {"max_rows": args.max_rows} if args.max_rows else {}
-    result, summary = run_fleet_query(
-        selection, paths, args.sql, _query_config(args, **extra), max_rows=args.max_rows
-    )
+    try:
+        result, summary = run_fleet_query(
+            selection, paths, args.sql, _query_config(args, **extra), max_rows=args.max_rows
+        )
+    except FleetQueryError as error:  # X-06: the attach failures are printed before the error
+        report_failures(error.summary)
+        raise
     report_failures(summary)
     write_rows(result, args.format)
     return EXIT_OK

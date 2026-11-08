@@ -16,6 +16,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 
+from duckfleet_core.catalog import CatalogOutdatedError
 from duckfleet_core.config import MAX_POOL_WORKERS, ScanConfig
 from duckfleet_core.fingerprint import SchemaDiff
 from duckfleet_core.store import recent_roots
@@ -273,16 +274,38 @@ def content_summary(variants: pd.DataFrame) -> pd.DataFrame:
     )
 
 
-def _identical(path: str, mtime: int) -> None:
-    st.subheader("Identical content")
-    st.caption(
-        "Small tables (up to 10,000 rows) are compared by their content: the sorted rows, "
-        "with the column names. One variant means the table holds the same data in every "
-        "database that has it."
+def identical_caption(cap: int | None) -> str:
+    """The caption of the Identical content section; the cap is the scan's ``content_hash_rows``."""
+    small = "Small tables" if cap is None else f"Small tables (up to {cap:,} rows)"
+    return (
+        f"{small} are compared by their content: the sorted rows, with the column names. "
+        "One variant means the table holds the same data in every database that has it."
     )
-    variants = access.content_variants(path, mtime)
+
+
+def identical_empty(cap: int | None) -> str:
+    """Why nothing was compared: the cap of the scan (X-12), not a reason to scan again."""
+    if cap == 0:
+        return "Content comparison was switched off in the last scan (content_hash_rows is 0)."
+    if cap is None:
+        return "No table was compared: the fleet has no small base table."
+    return (
+        f"No table was compared: none of the base tables has up to {cap:,} rows "
+        "(larger tables are not compared)."
+    )
+
+
+def _identical(path: str, mtime: int, run: dict) -> None:
+    st.subheader("Identical content")
+    cap = access.content_hash_cap(run)
+    st.caption(identical_caption(cap))
+    try:
+        variants = access.content_variants(path, mtime)
+    except CatalogOutdatedError as outdated:  # a catalog of 0.3.x; the rest of the page works
+        st.info(str(outdated))
+        return
     if variants.empty:
-        st.info("No table was compared. Scan again if the catalog is older than 0.4.")
+        st.info(identical_empty(cap))
         return
     st.dataframe(content_summary(variants), hide_index=True, width="stretch")
     groups = variants[variants["n_members"] > 1]
@@ -486,7 +509,7 @@ def render() -> None:
     _fleet_table(dbs)
     _families(path, mtime)
     _variants(path, mtime)
-    _identical(path, mtime)
+    _identical(path, mtime, run)
     _diff(path, mtime, dbs)
     _timeline(path, mtime, dbs)
     _problems(path, mtime)

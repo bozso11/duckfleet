@@ -83,6 +83,12 @@ def _plot_prefill(rel_path: str, table_label: str, columns: pd.DataFrame) -> dic
     }
 
 
+def _prepare_sql(text: str) -> None:
+    """Button callback: the query for the SQL page, which then works on this one database."""
+    st.session_state["sql_text"] = text
+    st.session_state["scope_mode"] = "one"  # the template is about this database's table (X-09)
+
+
 def _prepare_plot(prefill: dict[str, Any]) -> None:
     """Button callback (runs before the rerun, so widget state may still be set)."""
     st.session_state["selected_table"] = prefill["table"]
@@ -285,8 +291,13 @@ def render() -> None:
             )
 
     sql_col, plot_col, _ = st.columns([1, 1, 6])
-    if sql_col.button("Open in SQL", key="open_in_sql", disabled=not available):
-        st.session_state["sql_text"] = f"SELECT * FROM {qualified_name(schema, table)} LIMIT 100"
+    if sql_col.button(
+        "Open in SQL",
+        key="open_in_sql",
+        disabled=not available,
+        on_click=_prepare_sql,
+        args=(f"SELECT * FROM {qualified_name(schema, table)} LIMIT 100",),
+    ):
         st.switch_page(nav.PAGES["sql"])
     if plot_col.button(
         "Plot this table",

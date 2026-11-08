@@ -2,7 +2,103 @@
 
 ## Unreleased
 
-1. `docs/REVIEW_v0.4.md`: review of 0.4.0 against the plan (accepted; 13 confirmed defects, four medium, to ship as 0.4.1). Decision D-049.
+## 0.4.1 (2026-11-08)
+
+Fixes from `docs/REVIEW_v0.4.md` (decision D-049; choices in D-050), shipped as one commit
+directly from the review document: Section 2 (X-01 to X-13), Section 3 (P-12 to P-15) and the
+test gaps of Section 5. Also in this release: `docs/REVIEW_v0.4.md` (review of 0.4.0, 13 confirmed
+defects, four medium) and D-049 (planning documents only). The demo fleet and its default numbers
+are unchanged. Upgrading needs no rescan; a catalog written by 0.3.x still needs one for the
+Identical content section (X-04). There is no v0.5 plan.
+
+### Fixes, by review ID
+
+1. **X-01 (medium)** The content hash query referenced the row through the alias `df_row`; a
+   table with a column of that name bound the identifier to the column, so the hash covered that
+   one column and tables that differed elsewhere were called identical. The alias is now the first
+   of `df_row`, `df_row_2`, ... that is no column of the table (case-insensitive). The alias is not
+   part of the hash, so every other hash is unchanged. A table with a `df_row` column keeps its
+   old, wrong hash in the cache until its file is profiled again (`--full` or any change of the
+   file); the profile schema version stays 2 (D-050, LIMITS 35).
+2. **X-02 (medium)** `main` joins the reserved aliases, so `main.duckdb` becomes `main_2` and
+   attaches (`memory`, `system`, `temp` were reserved already).
+3. **X-03 (medium)** Every member view is probed (`SELECT * FROM <alias>.<schema>.<view> LIMIT 0`)
+   after the lockdown and before the first union view exists. A view that no longer binds (its
+   base table is gone) used to fall back to the in-memory union view of that name and return the
+   other members' rows under its own label. Such a member is now left out of that union view and
+   listed in `FleetSummary.view_failures` as `("main.vw", "<rel_path>: <message>")`; a table whose
+   holders all fail has no union view.
+4. **X-04 (medium)** `CatalogReader` checks the catalog's columns once (`_ADDED_COLUMNS`) and
+   `content_variants()` raises `CatalogOutdatedError` ("older catalog: ... run `duckfleet scan`")
+   for a catalog without `tables.content_hash`. The Overview shows it as an info in the Identical
+   content section with the rest of the page intact; `duckfleet report` prints it with the command
+   to run and exits 2 (it was a raw binder error).
+5. **X-05** An alias equal to a non-`main` schema name of the chosen files made `CREATE VIEW
+   "s"."t"` and the user's `SELECT * FROM s.t` ambiguous. Such a member is detached and attached
+   again as `<alias>_2`, `_3`, ... before the lockdown, and the union views are created as
+   `memory."<schema>"."<table>"`.
+6. **X-06** A failing `fleet-sql` query hid the attach failures. `run_fleet_query` raises
+   `FleetQueryError` (a `QueryError`) that carries the connection's summary, and the command prints
+   the failures before the error (exit 3 as before).
+7. **X-07** `plot --kind bar --x database` without `--color` also coloured by `database` (a
+   duplicate column); the default colour is skipped when `--x` is the label column.
+8. **X-08** `FleetSummary.view_failures` is shown as a warning next to the attach warning on the
+   SQL page (Schema expander and above the result) and on the Plot page.
+9. **X-09** **Open in SQL** on the Database page sets the scope to one database (a button callback,
+   like **Plot this table**), so the template no longer runs on a union view.
+10. **X-10** The Schema expander names each view's label column and the placeholder query is built
+    from it (`duckfleet_database` where a member table has its own `database` column), using
+    `events` when there is one, else the first union view.
+11. **X-11** The Plot page caption counts the databases that hold the table (the view's members),
+    not the attached ones.
+12. **X-12** The Identical content caption reads the cap from the scan's configuration; the empty
+    state says that no base table is that small (or that the comparison was switched off) instead of
+    asking for another scan.
+13. **X-13** `LIMITS.md` 23 and 31, `ARCHITECTURE.md` Section 7 (`views/plot.py`,
+    `views/overview.py`, the persist list), the data flow and component 18, and the `plot-defaults`
+    row of `TUNING.md` match the code.
+14. **P-12** `--databases` is repeatable, and a value that is exactly one catalog rel_path is taken
+    whole, so a rel_path with a comma can be chosen (documented in LIMITS 34 and the option's help).
+15. **P-13** `CatalogReader` connections use the catalog's own temp leaf under the cache
+    (`<cache>/tmp/<pid>/<sha1(path)[:16]>`); an unwritable cache is ignored.
+16. **P-14** Left as documented (D-047); now also in LIMITS 34.
+17. **P-15** The `plot-defaults` text names `default_table` (time window and rows) and
+    `default_view` (a temporal column) separately.
+
+### Tests added (review Section 5)
+
+X-01: the hash changes with the other column, the alias skips column names in any case, the alias
+does not enter the hash. X-02: `main`, `system`, `temp`, `memory` (also upper case) attach next to
+another file. X-03: the three-file fleet of the review, a view that fails in every member, healthy
+views stay. X-04: the reader, `report` (exit 2 and the message, then a scan) and the Overview with a
+catalog whose `content_hash` column is dropped. X-05: the review's `s.duckdb`/`u.duckdb`, suffixes
+that skip taken names, a schema in another case. X-06: the error carries the summary, the CLI prints
+the failures first. X-07: the bar chart by `database`. X-08 to X-12: AppTest of both pages, the
+Database page and the Overview. P-12: repeated flags and a comma in a rel_path. P-13: the reader's
+config. Gaps: a spilling fleet query that then lists the working directory; `fleet-sql` and
+`fleet-tables` through a subprocess with a latin-1 stdout (csv and json); a plot over a
+`duckfleet_database` view; `--family` above 50; the series assertion of `test_cli_fleet.py` without
+its `or`; `glob()`, `read_text()`, `CREATE SECRET` and `IMPORT DATABASE` in the lockdown list.
+
+### Deviations from the review's fix column
+
+1. X-05: the alias is renamed after the attach, so it depends on the schemas of the chosen files,
+   not only on the file names (TUNING `alias-rule`, D-050).
+2. P-12: the review asks for repeated flags as the escape; a single flag whose value is exactly a
+   rel_path works as well.
+
+Choices the fix column left open (D-050): the probes of X-03 run after the lockdown (they are not
+user SQL and show what a query will get) and before the first union view exists; X-01 does not
+raise the profile schema version, because only tables with a column named `df_row` had a wrong hash
+and a rescan of every file for them is not worth it.
+
+### Open after 0.4.1
+
+1. Linux and a real fleet: as after 0.4.0 (AppTest in CI only; the numbers marked (TBC) in
+   `docs/LIMITS.md` are untested on a real fleet).
+2. The UI does not show the attach failures of a query that failed (the Schema expander warns
+   already); only the CLI does.
+3. No LICENSE file (D-014), owner decision.
 
 ## 0.4.0 (2026-11-08)
 

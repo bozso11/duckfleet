@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from duckfleet_core.fleet import (
     FALLBACK_LABEL_COLUMN,
     MAX_MEMBERS,
+    FleetQueryError,
     FleetSelection,
     alias_base,
     export_fleet_query,
@@ -306,6 +307,10 @@ def test_an_unknown_member_is_a_sql_error(demo_fleet: Path, config: QueryConfig)
         "SET memory_limit = '99GB'",
         "SET lock_configuration = false",
         "EXPORT DATABASE 'duckfleet_export_dir'",
+        "IMPORT DATABASE 'duckfleet_import_dir'",
+        "SELECT * FROM glob('*')",
+        "SELECT * FROM read_text('duckfleet_nothing.txt')",
+        "CREATE SECRET duckfleet_secret (TYPE S3, KEY_ID 'a', SECRET 'b')",
     ],
 )
 def test_after_the_lockdown_files_extensions_and_settings_are_blocked(
@@ -317,7 +322,9 @@ def test_after_the_lockdown_files_extensions_and_settings_are_blocked(
     with pytest.raises(QueryError) as caught:
         run(demo_fleet, config, F1, sql)
     assert caught.value.kind in ("blocked", "read_only"), caught.value
-    if sql.startswith(("COPY", "ATTACH", "SELECT * FROM read", "LOAD", "INSTALL", "SET")):
+    if sql.startswith(
+        ("COPY", "ATTACH", "SELECT * FROM read", "SELECT * FROM glob", "LOAD", "INSTALL", "SET")
+    ):
         assert caught.value.kind == "blocked", caught.value
     assert list(work.iterdir()) == []  # nothing was written
 
@@ -369,6 +376,32 @@ def test_nothing_is_written_beside_any_member(demo_fleet: Path, config: QueryCon
     sql = "select count(*) from (select hash(i) h from range(20000000) t(i) order by h)"
     assert run(demo_fleet, small, F1, sql)[0].rows == [(20_000_000,)]
     assert listing() == before
+
+
+def test_a_spilling_fleet_query_leaves_the_working_directory_empty(
+    demo_fleet: Path, config: QueryConfig, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The default temp directory of an in-memory DuckDB is ``.tmp`` in the working directory.
+
+    The lockdown tests list the working directory without spilling; this one spills (a temp
+    table of 15 M rows under 64 MB), shows from inside the connection that the spill files live
+    in the fleet's own folder, then lists the working directory.
+    """
+    work = tmp_path / "cwd"
+    work.mkdir()
+    monkeypatch.chdir(work)
+    small = config.model_copy(update={"memory_limit_mb": 64, "timeout_s": 120})
+    sql = (
+        "create temp table big as select i, hash(i) h from range(15000000) t(i); "
+        "select count(*), string_agg(path, ';') from duckdb_temporary_files()"
+    )
+    ((files, listed),) = run(demo_fleet, small, F1, sql)[0].rows
+    assert files >= 1  # it did spill
+    root = Path(config.resolved_temp_dir())
+    assert all(Path(p).parent.parent == root for p in listed.split(";"))  # <root>/fleet-<8 hex>/
+    assert all(Path(p).parent.name.startswith("fleet-") for p in listed.split(";"))
+    assert list(work.iterdir()) == []
+    assert not list(root.glob("fleet-*"))  # and the fleet's folder is gone with the connection
 
 
 # ---------------------------------------------------------------- the connection itself
@@ -599,3 +632,180 @@ def test_export_fleet_query_builds_csv_and_parquet(demo_fleet: Path, config: Que
     with pytest.raises(QueryError) as caught:
         export_fleet_query(sel, paths, "selec 1", "csv", config)
     assert caught.value.kind == "sql"
+
+
+# ---------------------------------------------------------------- review X-02: reserved aliases
+
+
+@pytest.mark.parametrize("name", ["main", "system", "temp", "memory"])
+def test_a_file_named_like_a_reserved_catalog_gets_a_suffixed_alias_and_attaches(
+    tmp_path: Path, config: QueryConfig, name: str
+) -> None:
+    """X-02: ``main.duckdb`` got the alias ``main``, which DuckDB refuses, in every selection."""
+    rels = [f"{name}.duckdb", "other.duckdb"]
+    for rel in rels:
+        make_db(tmp_path / rel, "CREATE TABLE t AS SELECT 7 AS v")
+    for case in (name, name.upper()):  # the base is lower-cased, so MAIN.duckdb is the same
+        assert select(f"{case}.duckdb").aliases() == {f"{name}_2": f"{case}.duckdb"}
+    with open_fleet(select(*rels), paths_of(tmp_path, *rels), config) as fleet:
+        assert fleet.failures == [] and fleet.con is not None
+        assert fleet.aliases == {f"{name}_2": rels[0], "other": rels[1]}
+        assert fleet.con.execute("select count(*) from t").fetchone() == (2,)
+        assert fleet.con.execute(f'select v from "{name}_2".main.t').fetchone() == (7,)
+
+
+# ---------------------------------------------------------------- review X-03: orphaned views
+
+
+def orphan_fleet(root: Path) -> list[str]:
+    """Three files with ``vw AS SELECT v FROM base``; ``base`` is gone in the third."""
+    rels = ["a.duckdb", "b.duckdb", "c.duckdb"]
+    for index, rel in enumerate(rels, start=1):
+        make_db(
+            root / rel,
+            f"CREATE TABLE base AS SELECT {index} AS v",
+            "CREATE VIEW vw AS SELECT v FROM base",
+        )
+    con = duckdb.connect(str(root / "c.duckdb"))
+    try:
+        con.execute("DROP TABLE base")  # the view stays and no longer binds
+    finally:
+        con.close()
+    return rels
+
+
+def test_a_member_view_without_its_base_table_is_left_out_of_the_union(
+    tmp_path: Path, config: QueryConfig
+) -> None:
+    """X-03: the view of ``c`` used to bind ``base`` to the in-memory union view of that name and
+    return the rows of ``a`` and ``b`` under its own label, with no error."""
+    rels = orphan_fleet(tmp_path)
+    with open_fleet(select(*rels), paths_of(tmp_path, *rels), config) as fleet:
+        assert fleet.con is not None and fleet.failures == []
+        assert fleet.con.execute("select database, v from vw order by 1").fetchall() == [
+            ("a.duckdb", 1), ("b.duckdb", 2),
+        ]  # fmt: skip  (nothing under c.duckdb)
+        assert fleet.con.execute("select database, v from base order by 1").fetchall() == [
+            ("a.duckdb", 1), ("b.duckdb", 2),
+        ]  # fmt: skip
+        view = fleet.view("main", "vw")
+        assert view is not None and view.members == ["a.duckdb", "b.duckdb"]
+        ((name, message),) = fleet.view_failures
+        assert name == "main.vw" and message.startswith("c.duckdb: ")
+        assert "base" in message
+
+
+def test_a_view_that_fails_in_every_member_has_no_union_and_one_failure_each(
+    tmp_path: Path, config: QueryConfig
+) -> None:
+    rels = ["a.duckdb", "b.duckdb"]
+    for rel in rels:
+        make_db(
+            tmp_path / rel,
+            "CREATE TABLE base AS SELECT 1 AS v",
+            "CREATE VIEW vw AS SELECT v FROM base",
+            "CREATE VIEW upper_vw AS SELECT v FROM vw",
+            "DROP TABLE base",
+        )
+    make_db(tmp_path / "c.duckdb", "CREATE TABLE ok AS SELECT 5 AS v")
+    rels.append("c.duckdb")
+    with open_fleet(select(*rels), paths_of(tmp_path, *rels), config) as fleet:
+        assert [(v.schema_name, v.table_name) for v in fleet.views] == [("main", "ok")]
+        # the view and the view built on it both fail, once for each member that holds them
+        assert sorted((name, message.split(":")[0]) for name, message in fleet.view_failures) == [
+            ("main.upper_vw", "a.duckdb"), ("main.upper_vw", "b.duckdb"),
+            ("main.vw", "a.duckdb"), ("main.vw", "b.duckdb"),
+        ]  # fmt: skip
+        assert fleet.con is not None
+        with pytest.raises(duckdb.Error):
+            fleet.con.execute("select * from vw")
+
+
+def test_healthy_member_views_stay_in_the_union(tmp_path: Path, config: QueryConfig) -> None:
+    rels = ["a.duckdb", "b.duckdb"]
+    for index, rel in enumerate(rels, start=1):
+        make_db(
+            tmp_path / rel,
+            f"CREATE TABLE base AS SELECT {index} AS v",
+            "CREATE VIEW vw AS SELECT v * 10 AS w FROM base",
+        )
+    result, summary = run(tmp_path, config, rels, "select database, w from vw order by 1")
+    assert result.rows == [("a.duckdb", 10), ("b.duckdb", 20)]
+    assert summary.view_failures == []
+
+
+# ---------------------------------------------------------------- review X-05: alias and schema
+
+
+def schema_fleet(root: Path) -> list[str]:
+    """``s.duckdb`` and ``u.duckdb`` both hold schema ``s`` (also the alias of the first)."""
+    make_db(root / "first.duckdb", "CREATE SCHEMA s", "CREATE TABLE s.t AS SELECT 1 AS a")
+    shutil.copy(root / "first.duckdb", root / "s.duckdb")  # a file named like its schema
+    (root / "first.duckdb").unlink()
+    make_db(root / "u.duckdb", "CREATE SCHEMA s", "CREATE TABLE s.t AS SELECT 2 AS a")
+    return ["s.duckdb", "u.duckdb"]
+
+
+def test_an_alias_equal_to_a_schema_of_the_fleet_is_suffixed_before_the_lockdown(
+    tmp_path: Path, config: QueryConfig
+) -> None:
+    """X-05: ``CREATE VIEW "s"."t"`` and the user's ``SELECT * FROM s.t`` were ambiguous."""
+    rels = schema_fleet(tmp_path)
+    assert list(select(*rels).aliases()) == ["s", "u"]  # the rule alone gives `s`
+    with open_fleet(select(*rels), paths_of(tmp_path, *rels), config) as fleet:
+        assert fleet.failures == [] and fleet.con is not None
+        assert fleet.aliases == {"s_2": "s.duckdb", "u": "u.duckdb"}  # same order as the selection
+        assert fleet.con.execute("select database, a from s.t order by 1").fetchall() == [
+            ("s.duckdb", 1), ("u.duckdb", 2),
+        ]  # fmt: skip
+        assert fleet.con.execute("select a from s_2.s.t").fetchall() == [(1,)]
+        view = fleet.view("s", "t")
+        assert view is not None and view.members == rels and not fleet.view_failures
+        assert fleet.con.execute(
+            "select schema_name from duckdb_views() where database_name = 'memory' and "
+            "view_name = 't'"
+        ).fetchall() == [("s",)]
+
+
+def test_the_suffix_skips_names_that_are_taken_by_aliases_or_schemas(
+    tmp_path: Path, config: QueryConfig
+) -> None:
+    rels = schema_fleet(tmp_path)
+    make_db(tmp_path / "w.duckdb", "CREATE SCHEMA s_2", "CREATE TABLE s_2.t AS SELECT 3 AS a")
+    rels.append("w.duckdb")
+    with open_fleet(select(*rels), paths_of(tmp_path, *rels), config) as fleet:
+        assert fleet.aliases == {"s_3": "s.duckdb", "u": "u.duckdb", "w": "w.duckdb"}
+        assert fleet.con is not None
+        assert fleet.con.execute("select count(*) from s_2.t").fetchone() == (1,)  # the union view
+
+
+def test_a_schema_named_like_an_alias_in_another_case_counts_as_a_clash(
+    tmp_path: Path, config: QueryConfig
+) -> None:
+    make_db(tmp_path / "x.duckdb", "CREATE SCHEMA Beta", "CREATE TABLE Beta.t AS SELECT 1 AS a")
+    make_db(tmp_path / "beta.duckdb", "CREATE TABLE t AS SELECT 2 AS a")
+    rels = ["x.duckdb", "beta.duckdb"]
+    with open_fleet(select(*rels), paths_of(tmp_path, *rels), config) as fleet:
+        assert fleet.aliases == {"x": "x.duckdb", "beta_2": "beta.duckdb"}
+
+
+def test_nothing_is_renamed_without_a_clash(demo_fleet: Path, config: QueryConfig) -> None:
+    with open_fleet(select(*F1), paths_of(demo_fleet, *F1), config) as fleet:
+        assert fleet.aliases == select(*F1).aliases()
+
+
+# ---------------------------------------------------------------- review X-06: summary on error
+
+
+def test_a_failing_query_carries_the_fleet_summary_with_the_attach_failures(
+    demo_fleet: Path, config: QueryConfig
+) -> None:
+    rels = [F1[0], ENCRYPTED, CORRUPT]
+    with pytest.raises(FleetQueryError) as caught:
+        run(demo_fleet, config, rels, "selec 1")
+    assert caught.value.kind == "sql"
+    assert isinstance(caught.value, QueryError)
+    summary = caught.value.summary
+    assert [f.rel_path for f in summary.failures] == [ENCRYPTED, CORRUPT]
+    assert list(summary.aliases.values()) == [F1[0]]
+    assert [v.table_name for v in summary.views] == ["config", "events"]

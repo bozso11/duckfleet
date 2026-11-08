@@ -5,4 +5,4 @@ Depends on duckfleet-core for every non-UI concern. Views live in ``views/``
 ``st.navigation``).
 """
 
-__version__ = "0.4.0"
+__version__ = "0.4.1"

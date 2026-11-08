@@ -12,6 +12,17 @@ one process must never share a temp folder (review W-01). Handles are opened per
 closed in ``finally``; nothing is cached. User SQL never runs before the configuration is
 locked, and aliases and view names are built from file and table names and always quoted.
 
+Orphaned member views (review X-03). A view stored in a member binds its unqualified table
+names against the member first and then against the default catalog, so a view whose base table
+is gone would silently read the in-memory union view of that name. Every member view is therefore
+probed (``SELECT * ... LIMIT 0``) before any union view exists; a member whose view does not bind
+is left out of that union and listed in ``FleetSummary.view_failures``.
+
+Aliases that clash with a schema (review X-05). An alias equal to a non-``main`` schema name of
+the fleet makes ``s.t`` ambiguous (catalog or schema); such a member is detached and attached
+again under a suffixed alias before the lockdown, and the union views are created as
+``memory."<schema>"."<table>"``.
+
 Type conflicts. ``UNION ALL BY NAME`` does not fail when the view is created, however
 incompatible the column types are; it fails when rows are read (``Unimplemented type for
 cast``), and neither ``LIMIT 0`` nor a probe with NULL constants shows it (verified on duckdb
@@ -35,6 +46,7 @@ from pydantic import BaseModel, Field, field_validator
 
 from duckfleet_core.profiler import classify_error as classify_attach_error
 from duckfleet_core.query import (
+    ErrorKind,
     QueryConfig,
     QueryError,
     QueryResult,
@@ -49,7 +61,7 @@ MEMORY = "memory"  # the name of the in-memory database of a fleet connection (v
 LABEL_COLUMN = "database"
 FALLBACK_LABEL_COLUMN = "duckfleet_database"  # D-044: when a member table has its own `database`
 _ALIAS_MAX = 48  # TUNING(alias-rule)
-_RESERVED_ALIASES = frozenset({MEMORY, "system", "temp"})  # TUNING(alias-rule)
+_RESERVED_ALIASES = frozenset({MEMORY, "system", "temp", "main"})  # TUNING(alias-rule)
 _NOT_ALNUM = re.compile(r"[^a-z0-9]+")
 
 # TUNING(union-casts): column types that DuckDB unifies without a cast in a union.
@@ -103,8 +115,9 @@ class FleetSelection(BaseModel):
         """``{alias: rel_path}`` in the order of ``rel_paths``.
 
         A collision (two rel_paths with the same base, or a base that is a reserved name such
-        as ``memory``) gets ``_2``, ``_3``, ... in rel_path order, so the same files always get
-        the same aliases whatever order they were chosen in.
+        as ``memory``, ``system``, ``temp`` or ``main``) gets ``_2``, ``_3``, ... in rel_path
+        order, so the same files always get the same aliases whatever order they were chosen in.
+        (``open_fleet`` may still rename a member whose alias equals a schema name, X-05.)
         """
         # TUNING(alias-rule)
         taken: set[str] = set(_RESERVED_ALIASES)
@@ -176,11 +189,38 @@ class FleetHandle(FleetSummary):
         return None
 
 
+class FleetQueryError(QueryError):
+    """A ``QueryError`` that carries the summary of the fleet connection it happened on (X-06).
+
+    The attach failures of the connection are then still known when the query itself failed.
+    """
+
+    def __init__(self, kind: ErrorKind, message: str, summary: FleetSummary):
+        super().__init__(kind, message)
+        self.summary = summary
+
+
 # ---------------------------------------------------------------- the connection
 
 
 def _literal(text: str) -> str:
     return "'" + text.replace("'", "''") + "'"
+
+
+def _attach_one(
+    con: duckdb.DuckDBPyConnection, alias: str, rel_path: str, paths: dict[str, str]
+) -> AttachFailure | None:
+    """``ATTACH`` the file of ``rel_path`` read-only as ``alias``; the failure, or ``None``."""
+    try:
+        target = _literal(str(paths[rel_path]))
+        con.execute(f"ATTACH {target} AS {quote_ident(alias)} (READ_ONLY)")
+    except duckdb.Error as exc:
+        error = classify_attach_error(exc)
+        kind = error.type
+        if not Path(str(paths[rel_path])).exists():  # the wording differs per OS and per case
+            kind = "missing"
+        return AttachFailure(rel_path, alias, kind, error.message)
+    return None
 
 
 def _attach_all(
@@ -189,18 +229,57 @@ def _attach_all(
     attached: dict[str, str] = {}
     failures: list[AttachFailure] = []
     for alias, rel_path in selection.aliases().items():
-        try:
-            target = _literal(str(paths[rel_path]))
-            con.execute(f"ATTACH {target} AS {quote_ident(alias)} (READ_ONLY)")
-        except duckdb.Error as exc:
-            error = classify_attach_error(exc)
-            kind = error.type
-            if not Path(str(paths[rel_path])).exists():  # the wording differs per OS and per case
-                kind = "missing"
-            failures.append(AttachFailure(rel_path, alias, kind, error.message))
-        else:
+        failure = _attach_one(con, alias, rel_path, paths)
+        if failure is None:
             attached[alias] = rel_path
+        else:
+            failures.append(failure)
     return attached, failures
+
+
+def _union_schemas(con: duckdb.DuckDBPyConnection, attached: dict[str, str]) -> set[str]:
+    """The lower-cased non-``main`` schema names that union views will be created in."""
+    found = fleet_tables(con, attached)
+    return {schema.lower() for schema, _table in found if schema.lower() != "main"}
+
+
+def _separate_aliases(
+    con: duckdb.DuckDBPyConnection,
+    attached: dict[str, str],
+    paths: dict[str, str],
+    failures: list[AttachFailure],
+) -> dict[str, str]:
+    """Rename the members whose alias equals a union-view schema (review X-05).
+
+    ``s.t`` would be ambiguous between the catalog ``s`` and the schema ``s`` of the in-memory
+    database. Such a member is detached and attached again as ``<alias>_2``, ``_3``, ... (the
+    first name that is no alias and no schema); this is the last moment it can be done, before
+    the lockdown. The returned dict keeps the order of ``attached``. A member that cannot be
+    attached again is added to ``failures`` and left out.
+    """
+    # TUNING(alias-rule)
+    schemas = _union_schemas(con, attached)
+    clashes = {alias for alias in attached if alias.lower() in schemas}
+    if not clashes:
+        return attached
+    taken = {alias.lower() for alias in attached} | schemas | {r.lower() for r in _RESERVED_ALIASES}
+    renamed: dict[str, str] = {}
+    for alias, rel_path in attached.items():
+        if alias not in clashes:
+            renamed[alias] = rel_path
+            continue
+        number, new = 1, alias
+        while new.lower() in taken:
+            number += 1
+            new = f"{alias}_{number}"
+        taken.add(new.lower())
+        con.execute(f"DETACH {quote_ident(alias)}")
+        failure = _attach_one(con, new, rel_path, paths)
+        if failure is None:
+            renamed[new] = rel_path
+        else:
+            failures.append(failure)
+    return renamed
 
 
 def _lock_down(con: duckdb.DuckDBPyConnection) -> None:
@@ -240,6 +319,8 @@ def open_fleet(
                 }
             )
             attached, failures = _attach_all(con, selection, paths)
+            if attached:
+                attached = _separate_aliases(con, attached, paths, failures)  # X-05
             if not attached:
                 detail = "; ".join(f"{f.rel_path}: {f.kind}: {f.message}" for f in failures[:3])
                 more = f" (and {len(failures) - 3} more)" if len(failures) > 3 else ""
@@ -344,7 +425,37 @@ def _view_sql(
             f"SELECT {_literal(rel_path)} AS {quote_ident(label)}, {star} "
             f"FROM {qualified_name(alias, schema, table)}"
         )
-    return f"CREATE VIEW {qualified_name(schema, table)} AS " + " UNION ALL BY NAME ".join(branches)
+    # memory.<schema>.<table>: unambiguous even when a schema is named like an alias (X-05)
+    name = qualified_name(MEMORY, schema, table)
+    return f"CREATE VIEW {name} AS " + " UNION ALL BY NAME ".join(branches)
+
+
+_VIEWS_SQL = (
+    "SELECT database_name, schema_name, view_name FROM duckdb_views() "
+    "WHERE NOT internal AND NOT temporary"
+)
+
+
+def _probe_member_views(
+    con: duckdb.DuckDBPyConnection, attached: dict[str, str]
+) -> dict[tuple[str, str], dict[str, str]]:
+    """``{(schema, view): {rel_path: message}}`` for the member views that do not bind (X-03).
+
+    A view stored in a member resolves its unqualified table names against the member first and
+    then against the default catalog. Once a union view of that name exists in memory, a view
+    whose base table is gone would bind to it and return the other members' rows under its own
+    label, with no error. So every member view is probed with ``LIMIT 0`` before the first
+    union view is created; this is not user SQL.
+    """
+    failed: dict[tuple[str, str], dict[str, str]] = {}
+    for database, schema, view in sorted(con.execute(_VIEWS_SQL).fetchall()):
+        if database not in attached:
+            continue
+        try:
+            con.execute(f"SELECT * FROM {qualified_name(database, schema, view)} LIMIT 0")
+        except duckdb.Error as exc:
+            failed.setdefault((schema, view), {})[attached[database]] = str(exc)[:500]
+    return failed
 
 
 def _build_views(
@@ -356,10 +467,16 @@ def _build_views(
     for database, schema, table, column, data_type in con.execute(_COLUMNS_SQL).fetchall():
         if database in attached:
             columns_of.setdefault((database, schema, table), []).append((column, data_type))
+    orphaned = _probe_member_views(con, attached)  # before any union view exists
 
     views: list[UnionView] = []
     failures: list[tuple[str, str]] = []
-    for (schema, table), rel_paths in members.items():
+    for (schema, table), listed in members.items():
+        broken = orphaned.get((schema, table), {})
+        failures.extend((f"{schema}.{table}", f"{rel}: {text}") for rel, text in broken.items())
+        rel_paths = [rel for rel in listed if rel not in broken]
+        if not rel_paths:
+            continue
         holders = [(by_alias_of[rel], rel) for rel in rel_paths]
         types: dict[str, set[str]] = {}
         for alias, _rel in holders:
@@ -369,7 +486,7 @@ def _build_views(
         wanted = {name for name, kinds in types.items() if _needs_cast(kinds)}
         differing = {name for name, kinds in types.items() if len(kinds) > 1}
         if schema != "main":
-            con.execute(f"CREATE SCHEMA IF NOT EXISTS {quote_ident(schema)}")
+            con.execute(f"CREATE SCHEMA IF NOT EXISTS {qualified_name(MEMORY, schema)}")
         casts = wanted
         try:
             try:
@@ -377,7 +494,7 @@ def _build_views(
             except (duckdb.BinderException, duckdb.ConversionException):
                 # safety net: cast every column whose type differs, then give up on this view
                 casts = differing
-                con.execute(f"DROP VIEW IF EXISTS {qualified_name(schema, table)}")
+                con.execute(f"DROP VIEW IF EXISTS {qualified_name(MEMORY, schema, table)}")
                 con.execute(_view_sql(schema, table, holders, label, columns_of, casts))
         except duckdb.Error as exc:
             failures.append((f"{schema}.{table}", str(exc)[:500]))
@@ -417,12 +534,17 @@ def run_fleet_query(
     """Run ``sql`` (as given) on the fleet connection and fetch at most ``max_rows`` rows.
 
     The union views and the per-file aliases are visible to the SQL; the result comes with the
-    summary of the connection (attach failures, views). Raises ``QueryError``.
+    summary of the connection (attach failures, views). Raises ``QueryError``; an error of the
+    query itself is a ``FleetQueryError`` that carries the summary.
     """
     limit = config.max_rows if max_rows is None else max_rows
     with as_query_errors(), open_fleet(selection, paths, config) as fleet:
         assert fleet.con is not None
-        result = execute_limited(fleet.con, sql, limit, config.timeout_s)
+        try:
+            with as_query_errors():
+                result = execute_limited(fleet.con, sql, limit, config.timeout_s)
+        except QueryError as error:  # X-06: the attach failures belong to the error as well
+            raise FleetQueryError(error.kind, error.message, fleet.summary()) from error
         return result, fleet.summary()
 
 

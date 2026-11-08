@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import logging
 import time
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, date, datetime
 from pathlib import Path
@@ -404,25 +405,46 @@ def _run_aggregates(
 EMPTY_HASH = "empty"
 
 
+def _row_alias(column_names: Sequence[str]) -> str:
+    """``df_row``, or ``df_row_2``, ... : the first name that is not a column of the table.
+
+    The alias stands for the whole row in the hash query. A bare identifier binds to a column of
+    that name before the table alias, which would make the hash cover that one column only
+    (review X-01); names compare case-insensitively like DuckDB's.
+    """
+    taken = {name.lower() for name in column_names}
+    alias, number = "df_row", 1
+    while alias in taken:
+        number += 1
+        alias = f"df_row_{number}"
+    return alias
+
+
 def _content_hash(
-    con: duckdb.DuckDBPyConnection, qualified: str, row_count: int | None, config: ScanConfig
+    con: duckdb.DuckDBPyConnection,
+    qualified: str,
+    row_count: int | None,
+    config: ScanConfig,
+    column_names: Sequence[str] = (),
 ) -> str | None:
     """md5 of the rows of a small base table, as sorted text (plan v0.4 Section 3.3, D-041).
 
     ``None`` above ``content_hash_rows`` rows, for a table whose rows cannot be cast to text
     and when the feature is off (0); ``"empty"`` for an empty table. The hash depends on the
     column names, their order and types as DuckDB prints them, and the values. The row alias
-    is unusual on purpose: with a plain ``t`` a column named ``t`` would win the reference.
+    is chosen among the names that are no column (``_row_alias``): with a plain ``t`` a column
+    named ``t`` would win the reference.
     """
     # TUNING(content-hash)
     if config.content_hash_rows <= 0 or row_count is None or row_count > config.content_hash_rows:
         return None
     if row_count == 0:
         return EMPTY_HASH
+    row_ref = quote_ident(_row_alias(column_names))
     try:
         row = con.execute(
-            'SELECT md5(string_agg("df_row"::VARCHAR, chr(10) ORDER BY "df_row"::VARCHAR)) '
-            f'FROM {qualified} AS "df_row"'
+            f"SELECT md5(string_agg({row_ref}::VARCHAR, chr(10) ORDER BY {row_ref}::VARCHAR)) "
+            f"FROM {qualified} AS {row_ref}"
         ).fetchone()
     except Exception as exc:  # an exotic type or too little memory: no hash, not a table error
         logger.debug("no content hash for %s: %s", qualified, exc)
@@ -447,7 +469,8 @@ def _profile_table(
             row = con.execute(f"SELECT count(*) FROM {qualified}").fetchone()
             row_count = int(row[0]) if row else None
         if item.kind == "table":
-            content_hash = _content_hash(con, qualified, row_count, config)
+            names = [column.name for column in columns]
+            content_hash = _content_hash(con, qualified, row_count, config, names)
         if item.kind == "table" and columns:
             stats, t_min, t_max, error = _table_stats(con, qualified, columns, row_count, config)
     except Exception as exc:

@@ -27,6 +27,7 @@ from duckfleet_core.fleet import (
     run_fleet_query,
 )
 from duckfleet_core.query import MissingDependencyError, QueryError, export_query, run_query
+from duckfleet_core.sqlutil import quote_ident
 from duckfleet_ui import catalog_access as access
 from duckfleet_ui import common
 from duckfleet_ui import query_access as queries
@@ -34,6 +35,7 @@ from duckfleet_ui import scope as scopes
 
 PLACEHOLDER = "SELECT * FROM ..."
 PLACEHOLDER_MANY = "SELECT database, count(*) FROM events GROUP BY 1"
+_PLAIN_NAME = re.compile(r"[A-Za-z_][A-Za-z0-9_]*\Z")
 HISTORY_SIZE = 20
 MIN_ROWS, MAX_ROWS = 1, 100_000
 MIN_TIMEOUT_S, MAX_TIMEOUT_S = 1, 3_600
@@ -100,6 +102,7 @@ def _run(scope: scopes.Scope, info: dict[str, Any], paths: dict[str, str], sql: 
                     FleetSelection(rel_paths=scope.rel_paths), paths, sql, config
                 )
                 result["failures"] = [asdict(f) for f in summary.failures]
+                result["view_failures"] = list(summary.view_failures)
             else:
                 outcome = run_query(info["abs_path"], sql, config)
     except QueryError as error:
@@ -167,9 +170,12 @@ def _show_result(result: dict[str, Any]) -> None:
     if "error" in result:
         _show_error(*result["error"])
         return
-    warning = scopes.attach_warning(result.get("failures", []))
-    if warning:
-        st.warning(warning)
+    for warning in (
+        scopes.attach_warning(result.get("failures", [])),
+        scopes.view_warning(result.get("view_failures", [])),
+    ):
+        if warning:
+            st.warning(warning)
     frame = result["frame"]
     parts = [f"{result['elapsed_s']:.2f} s", f"{result['rows']:,} rows shown"]
     if result["statements"] > 1:
@@ -234,17 +240,50 @@ def aliases_frame(summary: FleetSummary) -> pd.DataFrame:
     )
 
 
-def _schema_many(selection: FleetSelection, paths: dict[str, str]) -> None:
+def _name(identifier: str) -> str:
+    """The identifier as written in a query: bare when it is plain, else quoted."""
+    return identifier if _PLAIN_NAME.match(identifier) else quote_ident(identifier)
+
+
+def placeholder_many(summary: FleetSummary | None) -> str:
+    """The placeholder of the editor in scope several: a count per database of ``events``.
+
+    The view is ``events`` when there is one, else the first union view, and the column is the
+    label column of that view, which is ``duckfleet_database`` when a member table has a column
+    of its own named ``database`` (X-10).
+    """
+    if summary is None or not summary.views:
+        return PLACEHOLDER_MANY
+    view = next((v for v in summary.views if v.table_name == "events"), summary.views[0])
+    table = _name(view.table_name)
+    if view.schema_name != "main":
+        table = f"{_name(view.schema_name)}.{table}"
+    return f"SELECT {_name(view.label_column)}, count(*) FROM {table} GROUP BY 1"
+
+
+def label_text(summary: FleetSummary) -> str:
+    """How the Schema expander names the label column of the union views (X-10)."""
+    labels = sorted({view.label_column for view in summary.views}) or ["database"]
+    if len(labels) == 1:
+        return f"a `{labels[0]}` column"
+    names = ", ".join(f"`{name}`" for name in labels)
+    return (
+        f"a label column ({names}; `duckfleet_database` is used where a member table has a "
+        "`database` column of its own, the Columns below say which)"
+    )
+
+
+def _schema_many(selection: FleetSelection, paths: dict[str, str]) -> FleetSummary | None:
     """The union views and aliases of the chosen databases (a fleet connection, opened here)."""
     with st.expander("Schema"):
         try:
             summary = describe_fleet(selection, paths, _options_config())
         except QueryError as error:
             _show_error(error.kind, error.message)
-            return
+            return None
         st.markdown(
             "**Union views**: each table name holds the rows of every chosen database that has it, "
-            "with a `database` column (the file's rel_path); a column a database lacks is NULL "
+            f"with {label_text(summary)} (the file's rel_path); a column a database lacks is NULL "
             "there."
         )
         views = views_frame(summary)
@@ -257,9 +296,13 @@ def _schema_many(selection: FleetSelection, paths: dict[str, str]) -> None:
             "`SELECT * FROM <alias>.main.events`."
         )
         st.dataframe(aliases_frame(summary), hide_index=True, width="stretch")
-        warning = scopes.attach_warning([asdict(f) for f in summary.failures])
-        if warning:
-            st.warning(warning)
+        for warning in (
+            scopes.attach_warning([asdict(f) for f in summary.failures]),
+            scopes.view_warning(summary.view_failures),
+        ):
+            if warning:
+                st.warning(warning)
+        return summary
 
 
 # ---------------------------------------------------------------- page
@@ -295,6 +338,7 @@ def render() -> None:
         st.session_state.pop("sql_result")
     info: dict[str, Any] = {}
     paths: dict[str, str] = {}
+    fleet_summary: FleetSummary | None = None
     if scope.mode == "many":
         if not scope.rel_paths:
             st.info("Choose at least one database.")
@@ -303,7 +347,7 @@ def render() -> None:
         paths = {rel: everything[rel] for rel in scope.rel_paths if rel in everything}
         selection = FleetSelection(rel_paths=list(paths))
         available = True  # a file that vanished is reported as an attach failure
-        _schema_many(selection, paths)
+        fleet_summary = _schema_many(selection, paths)
     else:
         info = access.database_info(path, mtime, rel_path)
         if not info:
@@ -323,7 +367,7 @@ def render() -> None:
         "SQL",
         key="sql_text",
         height=220,
-        placeholder=PLACEHOLDER_MANY if scope.mode == "many" else PLACEHOLDER,
+        placeholder=placeholder_many(fleet_summary) if scope.mode == "many" else PLACEHOLDER,
         persist_state="session",
     )
     # The options and Run share a form, so Run submits the typed option values with the click

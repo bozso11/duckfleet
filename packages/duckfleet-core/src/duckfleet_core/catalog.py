@@ -21,6 +21,7 @@ from typing import Any
 
 import duckdb
 
+from duckfleet_core import config as core_config
 from duckfleet_core.discovery import RejectedFile
 from duckfleet_core.fingerprint import (
     SchemaDiff,
@@ -36,6 +37,11 @@ logger = logging.getLogger("duckfleet")
 
 REPLACE_RETRIES = 5
 REPLACE_DELAY_S = 0.5
+
+# Columns an older catalog lacks: (table, column, the release that added it).
+# ``CatalogReader`` checks them once (review X-04) and raises ``CatalogOutdatedError`` instead of
+# letting the binder fail in the middle of a page or a report.
+_ADDED_COLUMNS = (("tables", "content_hash", "0.4"),)
 
 SCHEMA_SQL = """
 CREATE TABLE scan_runs (
@@ -236,28 +242,86 @@ def build_catalog(
 # ---------------------------------------------------------------- reading
 
 
-class CatalogReader:
-    """Thin SQL queries over the catalog. Every method opens and closes its own connection."""
+class CatalogOutdatedError(RuntimeError):
+    """The catalog was written by an older duckfleet and lacks a column this version reads.
 
-    def __init__(self, catalog_path: Path | str):
+    The message tells the user what to do; the Overview shows it as an info and ``report`` prints
+    it with exit code 2 (review X-04).
+    """
+
+    def __init__(self, missing: str, since: str):
+        super().__init__(
+            f"older catalog: it was written before duckfleet {since} and has no {missing}; "
+            "run `duckfleet scan` to rebuild it"
+        )
+        self.missing = missing
+        self.since = since
+
+
+class CatalogReader:
+    """Thin SQL queries over the catalog. Every method opens and closes its own connection.
+
+    DuckDB's temp directory for these connections is the catalog's own leaf under the cache
+    (``<cache>/tmp/<pid>/<sha1(path)[:16]>``, review P-13): a query that spills would otherwise
+    create ``catalog.duckdb.tmp`` beside the catalog, the name of the writer's build target. The
+    cache directory is derived from the standard layout ``<cache>/roots/<root_key>/catalog.duckdb``
+    (a catalog elsewhere uses the default cache), so every reader of one catalog in a process has
+    the same config.
+    """
+
+    def __init__(self, catalog_path: Path | str, temp_root: Path | str | None = None):
         self.path = Path(catalog_path)
+        self._temp_root = Path(temp_root) if temp_root is not None else None
+        self._current = False  # set once the columns have been checked (a pass is kept)
+
+    def temp_root(self) -> Path:
+        """The per-process folder under which this catalog's temp leaf lives."""
+        if self._temp_root is not None:
+            return self._temp_root
+        parts = Path(os.path.abspath(self.path)).parts
+        if len(parts) >= 4 and parts[-3] == "roots":
+            cache = Path(*parts[:-3])
+        else:
+            cache = core_config.default_cache_dir()  # looked up here, so tests can redirect it
+        return process_temp_dir(cache)
 
     @contextlib.contextmanager
     def _connect(self) -> Iterator[duckdb.DuckDBPyConnection]:
-        con = duckdb.connect(
-            str(self.path),
-            read_only=True,
-            config={
-                "threads": 2,
-                "memory_limit": "1GB",
-                "autoinstall_known_extensions": False,
-                "autoload_known_extensions": False,
-            },
-        )
+        config: dict[str, Any] = {
+            "threads": 2,
+            "memory_limit": "1GB",
+            "autoinstall_known_extensions": False,
+            "autoload_known_extensions": False,
+        }
+        try:
+            config["temp_directory"] = ensure_file_temp_dir(self.temp_root(), self.path)
+        except OSError:  # an unwritable cache must not stop a read of the catalog
+            logger.debug("no temp directory for %s", self.path, exc_info=True)
+        con = duckdb.connect(str(self.path), read_only=True, config=config)
         try:
             yield con
         finally:
             con.close()
+
+    def _require_current(self) -> None:
+        """Raise ``CatalogOutdatedError`` if the catalog lacks a column added after 0.3.
+
+        Checked once per reader and only on success, so a catalog rebuilt by a scan is looked at
+        again by the next reader (the UI creates one per call).
+        """
+        if self._current:
+            return
+        with self._connect() as con:
+            have = {
+                (table, column)
+                for table, column in con.execute(
+                    "SELECT table_name, column_name FROM duckdb_columns() WHERE NOT internal"
+                ).fetchall()
+            }
+        for table, column, since in _ADDED_COLUMNS:
+            if (table, column) not in have:
+                raise CatalogOutdatedError(f"{table}.{column}", since)
+        self._current = True
 
     def _rows(self, sql: str, params: Sequence[Any] | None = None) -> list[dict[str, Any]]:
         with self._connect() as con:
@@ -369,7 +433,9 @@ class CatalogReader:
         One row per ``(schema_name, table_name, content_hash)`` with ``n_members``, the sorted
         ``members`` (rel_paths) and the largest ``row_count``; ordered by table, then by
         ``n_members`` descending, then by hash. ``content_hash`` is ``"empty"`` for empty tables.
+        Raises ``CatalogOutdatedError`` for a catalog written before 0.4 (no ``content_hash``).
         """
+        self._require_current()
         return self._rows(
             "SELECT schema_name, table_name, content_hash, "
             "count(DISTINCT rel_path) AS n_members, "

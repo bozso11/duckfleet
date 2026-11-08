@@ -19,7 +19,7 @@ from pathlib import Path
 from pydantic import ValidationError
 
 from duckfleet_core import __version__, cli_fleet, cli_plot, cli_query
-from duckfleet_core.catalog import CatalogReader
+from duckfleet_core.catalog import CatalogOutdatedError, CatalogReader
 from duckfleet_core.config import ScanConfig
 from duckfleet_core.coordinator import run_scan
 from duckfleet_core.demo import make_demo_fleet
@@ -198,6 +198,8 @@ def _cmd_report(args: argparse.Namespace) -> int:
         )
     try:
         print(build_report(CatalogReader(store.catalog_path), args.format))
+    except CatalogOutdatedError as exc:  # X-04: a catalog of 0.3.x, say what to do
+        return _fatal(f"{exc} (duckfleet scan {args.root})")
     except Exception as exc:
         logging.getLogger("duckfleet").debug("report failed", exc_info=True)
         return _fatal(f"cannot read the catalog {store.catalog_path}: {exc}")

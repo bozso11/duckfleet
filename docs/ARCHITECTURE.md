@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-11-08 (0.4.0). Section 5 holds the final catalog schema,
+Last updated: 2026-11-08 (0.4.1). Section 5 holds the final catalog schema,
 copied from `duckfleet_core/catalog.py` (`SCHEMA_SQL`).
 
 ## 1. Two packages, one boundary
@@ -38,7 +38,9 @@ the CLI, notebooks and tests.
    result collection, prune, catalog build, progress events.
 7. **catalog**: builds the DuckDB catalog file from all profiles (single
    writer, atomic replace) and reads it (per-request read-only
-   connections).
+   connections, each with the catalog's own temp leaf under the cache, P-13).
+   `CatalogReader` checks once that the catalog has the columns added after 0.3 and
+   raises `CatalogOutdatedError` (X-04).
 8. **report**: text and Markdown summaries from the catalog.
 9. **cli**: `scan`, `report`, `make-demo`, `paths`, and (v0.2) `sql`,
    `summarize`, `preview`, (v0.3) `plot`.
@@ -70,12 +72,14 @@ the CLI, notebooks and tests.
     folding) on the sandboxed query connection and returns `PlotData` (D-033, D-036).
 17. **cli_plot** (v0.3): the command `plot` (D-037); since 0.4 also `--databases` and `--family`.
 18. **fleet** (v0.4): `FleetSelection` (1 to 50 distinct rel_paths) and its aliases, `open_fleet` (an
-    in-memory DuckDB; the members attached read-only from catalog paths, then external access off and
-    the configuration locked, then one union view per table with a `database` column), `fleet_tables`,
-    `describe_fleet`, `run_fleet_query`, `export_fleet_query`. Every connection has its own temp folder
-    (D-040, D-044).
+    in-memory DuckDB; the members attached read-only from catalog paths, aliases that equal a union
+    schema renamed, then external access off and the configuration locked, then every member view
+    probed, then one union view per table with a `database` column), `fleet_tables`,
+    `describe_fleet`, `run_fleet_query` (an error of the query is a `FleetQueryError` that carries the
+    connection's summary), `export_fleet_query`. Every connection has its own temp folder (D-040,
+    D-044, D-050).
 19. **cli_fleet** (v0.4): the commands `fleet-tables` and `fleet-sql` and the selection options
-    `--databases`, `--family`, `--all` (D-046).
+    `--databases` (repeatable), `--family`, `--all` (D-046, D-050).
 20. **content hash** (v0.4): `profiler._content_hash` stores `TableProfile.content_hash` for tables up to
     L-07 rows; the catalog has `tables.content_hash` and `CatalogReader.content_variants()`; the report
     and the Overview read it (D-041, D-045).
@@ -132,8 +136,11 @@ SQL page / Plot page / CLI fleet-sql, fleet-tables, plot --family
      v
 fleet.open_fleet:  duckdb.connect() in memory, own temp folder <pid>/fleet-<8 hex>
      ATTACH '<abs path>' AS <alias> (READ_ONLY) for each member   (a failure is an AttachFailure)
+     DETACH and ATTACH again as <alias>_2 where an alias equals a schema of the union views
      SET enable_external_access = false; SET lock_configuration = true
-     CREATE VIEW "<schema>"."<table>" AS SELECT '<rel_path>' AS database, * FROM <alias>... UNION ALL BY NAME ...
+     SELECT * FROM <alias>.<schema>.<view> LIMIT 0 for every member view (a failure leaves that
+       member out of the union view of that name, and is a view failure)
+     CREATE VIEW memory."<schema>"."<table>" AS SELECT '<rel_path>' AS database, * FROM <alias>... UNION ALL BY NAME ...
      |  user SQL / the plot plan runs here, under the timeout
      v
 result + FleetSummary (aliases, attach failures, union views)      connection closed, folder removed
@@ -146,6 +153,7 @@ result + FleetSummary (aliases, attach failures, union views)      connection cl
                                       (D-015; Windows %LOCALAPPDATA%\duckfleet\Cache, Linux ~/.cache/duckfleet)
   recent_roots.json
   tmp/<pid>/<file hash>/              DuckDB spill files of one process, one folder per file (0.3.1), removed at exit
+                                      (also the leaf of the catalog reader, 0.4.1); fleet-<8 hex>/ per fleet connection
   roots/<root_key>/
     root.txt
     profiles/<file_key>.json
@@ -218,7 +226,8 @@ Rules:
    maximum over all temporal columns of all tables (TUNING time-window-scope).
 5. `CatalogReader` opens a read-only connection inside each method and closes
    it in `finally`; an open handle would block the next scan's `os.replace`
-   on Windows. Methods: `scan_run`, `databases`, `tables`, `columns`,
+   on Windows. Its connections use the catalog's temp leaf under the cache as
+   `temp_directory` (the cache is read off the layout `<cache>/roots/<root_key>/`). Methods: `scan_run`, `databases`, `tables`, `columns`,
    `families`, `family_members`, `family_table_matrix`, `table_variants`,
    `content_variants`, `timeline`, `health`, `rejected`, `diff`, `df` (pandas, UI only).
 
@@ -250,7 +259,10 @@ Rules:
    never runs before `lock_configuration` is set; aliases and view names come from file and table
    names and are always quoted, rel_paths enter SQL only as escaped string literals; no cached
    connections; each connection is its own DuckDB instance with its own temp folder, because two
-   instances must never share one (W-01).
+   instances must never share one (W-01). The open sequence is attach, separate aliases from
+   schema names, lock down, probe the member views, then build the union views as
+   `memory."<schema>"."<table>"`: no union view may exist while a member view is probed, because a
+   stored view falls back to the default catalog for a table name it cannot find (X-03).
 
 ## 7. UI structure (v0.4)
 
@@ -261,18 +273,23 @@ nav.py            the st.Page objects: Overview, Database, Plot, SQL (views impo
 common.py         environment, root and catalog resolution, keep_valid, the shared database
                   selectbox, file_state (missing, changed or current against the scan; its live
                   size and mtime key the preview and plot caches)
-views/plot.py     render(): table and chart kind, form (x, y, colour, filter, options, Plot),
-                  chart, caption, Plotted data (table, CSV), SQL
+views/plot.py     render(): scope control, table (the union views in scope several databases, with
+                  the attach and view warnings) and chart kind, form (x, y, colour, filter, options,
+                  Plot), chart, caption (the databases that hold the table), Plotted data (table,
+                  CSV), SQL
 charts.py         palette, template, needs_panels, Plotly figures of PlotData, to_frame (no widgets)
 views/overview.py render(): sidebar (recent-roots selectbox, root folder, workers, max files,
                   full rescan, sniff all, Scan and Load existing catalog buttons), metrics,
-                  fleet table, families + matrix, table variants, diff, timeline, health, rejected
+                  fleet table, families + matrix, table variants, identical content (the cap and
+                  an older catalog's info), diff, timeline, health, rejected
 views/database.py render(): database selectbox, header, tables, lazy tabs Columns, Summary,
-                  Preview, Open in SQL, and Plot this table (hands the table, its first
-                  temporal column and first numeric column to the Plot page through
-                  plot_prefill)
+                  Preview, Open in SQL (sets scope one database), and Plot this table (hands the
+                  table, its first temporal column and first numeric column to the Plot page
+                  through plot_prefill, also in scope one database)
 views/sql.py      render(): scope control, schema expander (union views and aliases in scope
-                  several), editor, form (Options + Run), Clear, result grid, downloads, history
+                  several, naming each view's label column, with the attach and view warnings),
+                  editor (placeholder built from the label column), form (Options + Run), Clear,
+                  result grid, downloads, history
 scope.py          scope_control(dbs, families) -> Scope(mode, rel_paths): radio One database /
                   Several databases, multiselect (at most 50), Family selectbox (D-047)
 scan_runner.py    subprocess (python -m duckfleet_core scan --progress json) + JSON-lines
@@ -288,7 +305,8 @@ The pages read `DUCKFLEET_ROOT` and `DUCKFLEET_CACHE_DIR` for their defaults
 shared between pages lives in the session state: `active_root`,
 `selected_rel_path`, `selected_table`, `sql_text`. Widgets whose value must survive a visit to
 another page (the six sidebar inputs, `selected_rel_path`, `selected_table`, `sql_text`,
-`sql_max_rows`, `sql_timeout`, the plot options) carry a `key` and `persist_state="session"`.
+`sql_max_rows`, `sql_timeout`, `scope_mode`, `scope_rel_paths`, the plot options) carry a `key` and
+`persist_state="session"`.
 The Plot page keeps its last request (the spec as JSON, not the data) in `plot_request`, and
 `plot_prefill` carries what **Plot this table** hands over. The scope lives in `scope_mode` and
 `scope_rel_paths` (shared by the SQL and Plot pages, `persist_state="session"`); results, downloads and

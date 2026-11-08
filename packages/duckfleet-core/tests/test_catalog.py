@@ -416,3 +416,79 @@ def test_the_catalog_writer_connects_with_limits_and_a_cache_temp_directory(
             "autoload_known_extensions": False,
         }
     ]
+
+
+# ---------------------------------------------------------------- review P-13: reader temp dir
+
+
+def test_the_reader_connects_with_a_cache_temp_directory_of_its_own(
+    tmp_path: Path, demo_profiles, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """P-13: a spilling catalog query would create ``catalog.duckdb.tmp`` beside the catalog,
+    the name of the writer's build target; the reader gets the catalog's leaf under the cache."""
+    cache = tmp_path / "cache"
+    target = cache / "roots" / "abc123" / "catalog.duckdb"
+    build_catalog(
+        demo_profiles,
+        make_summary(ScanConfig(cache_dir=str(cache))),
+        REJECTED,
+        target,
+        target.with_name("catalog.duckdb.tmp"),
+    )
+    configs: list[dict] = []
+    real_connect = duckdb.connect
+
+    def spy(*args, **kwargs):
+        configs.append(kwargs.get("config", {}))
+        return real_connect(*args, **kwargs)
+
+    monkeypatch.setattr(catalog.duckdb, "connect", spy)
+    expected = str(file_temp_dir(process_temp_dir(cache), target))
+    reader = CatalogReader(target)
+    reader.databases()
+    reader.tables()
+    assert len(configs) == 2 and configs[0] == configs[1]  # one config per catalog (D-021)
+    assert configs[0] == {
+        "threads": 2,
+        "memory_limit": "1GB",
+        "autoinstall_known_extensions": False,
+        "autoload_known_extensions": False,
+        "temp_directory": expected,
+    }
+    assert Path(expected).is_dir()
+    assert CatalogReader(target).temp_root() == process_temp_dir(cache)
+    # an explicit root wins, and a catalog outside the standard layout uses the default cache
+    other = CatalogReader(target, temp_root=tmp_path / "elsewhere")
+    assert other.temp_root() == tmp_path / "elsewhere"
+    loose = tmp_path / "loose.duckdb"
+    build_catalog(
+        demo_profiles,
+        make_summary(ScanConfig(cache_dir=str(cache))),
+        REJECTED,
+        loose,
+        loose.with_name("loose.duckdb.tmp"),
+    )
+    default = catalog.core_config.default_cache_dir()  # the test run's folder (conftest)
+    assert CatalogReader(loose).temp_root() == process_temp_dir(default)
+    assert not (tmp_path / "catalog.duckdb.tmp").exists() and not list(
+        target.parent.glob("*.tmp")
+    )  # nothing is written beside the catalog
+
+
+def test_an_unwritable_cache_does_not_stop_a_read(
+    tmp_path: Path, demo_profiles, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "cache" / "roots" / "k" / "catalog.duckdb"
+    build_catalog(
+        demo_profiles,
+        make_summary(ScanConfig(cache_dir=str(tmp_path / "cache"))),
+        REJECTED,
+        target,
+        target.with_name("catalog.duckdb.tmp"),
+    )
+
+    def refuse(*args, **kwargs):
+        raise PermissionError("read-only cache")
+
+    monkeypatch.setattr(catalog, "ensure_file_temp_dir", refuse)
+    assert len(CatalogReader(target).databases()) == 13

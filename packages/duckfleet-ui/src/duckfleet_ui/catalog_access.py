@@ -134,6 +134,17 @@ def _scan_sample_rows(reader: CatalogReader) -> int | None:
         return None
 
 
+def content_hash_cap(run: dict[str, Any]) -> int | None:
+    """The row cap of the content hash in the scan that wrote the catalog (``content_hash_rows``).
+
+    ``None`` when the scan record has no such option (X-12); 0 means the comparison was off.
+    """
+    try:
+        return int(json.loads(run.get("config_json") or "{}")["content_hash_rows"])
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 @st.cache_data(show_spinner=False)
 def families(catalog_path: str, catalog_mtime_ns: int, level: str) -> pd.DataFrame:
     rows = CatalogReader(catalog_path).families(level)

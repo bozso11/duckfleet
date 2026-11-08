@@ -152,8 +152,9 @@ def _plot_fleet(args: argparse.Namespace, reader: CatalogReader) -> int:
     )
     if view is None:
         raise QueryError("sql", f"{schema}.{table} is not in any of the attachable databases")
-    if args.color is None:
-        args.color = view.label_column  # one series per database
+    if args.color is None and (args.x or "").lower() != view.label_column.lower():
+        # one series per database, unless the files already are the categories (X-07)
+        args.color = view.label_column
     spec = _spec(args, schema, table)
     data = fetch_fleet_plot_data(selection, paths, spec, config)
     _print_plot(args, data, len(summary.aliases))
