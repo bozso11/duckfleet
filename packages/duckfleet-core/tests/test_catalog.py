@@ -15,7 +15,7 @@ from duckfleet_core.discovery import RejectedFile, discover
 from duckfleet_core.fingerprint import TableDiff, TypeChange
 from duckfleet_core.models import DatabaseProfile, ScanSummary
 from duckfleet_core.profiler import profile_database
-from duckfleet_core.tempdir import process_temp_dir
+from duckfleet_core.tempdir import file_temp_dir, process_temp_dir
 
 RUN1 = "exp_01/run_01/metrics.duckdb"
 RUN2 = "exp_02/run_01/metrics.duckdb"
@@ -409,7 +409,9 @@ def test_the_catalog_writer_connects_with_limits_and_a_cache_temp_directory(
         {
             "threads": 2,
             "memory_limit": "1GB",
-            "temp_directory": str(process_temp_dir(cache)),
+            "temp_directory": str(
+                file_temp_dir(process_temp_dir(cache), tmp_path / "catalog.duckdb.tmp")
+            ),
             "autoinstall_known_extensions": False,
             "autoload_known_extensions": False,
         }

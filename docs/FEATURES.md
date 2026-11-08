@@ -5,7 +5,7 @@ Status values: `done vX` (shipped in version X), `planned vX` (in the
 version ladder), `open option` (not scheduled), `out of scope`. Update the
 row in the same commit that changes the behaviour.
 
-Last updated: 2026-11-08 (0.3.0).
+Last updated: 2026-11-08 (0.3.1).
 
 ## Discovery and scanning
 

@@ -262,6 +262,21 @@ def test_a_histogram_of_two_columns_has_a_panel_per_column(cdb: Path) -> None:
     assert fig.layout.xaxis.title.text == "y" and fig.layout.xaxis2.title.text == "big"
 
 
+def test_a_histogram_of_two_columns_has_a_legend_like_a_line_of_two_columns(cdb: Path) -> None:
+    """W-13: the y columns are the series when there is no colour column."""
+    plot = data(cdb, "histogram", y=["y", "big"], bins=10)
+    fig = charts.figure(plot, "light")
+    assert fig.layout.showlegend is True
+    assert [t.name for t in fig.data] == ["y", "big"] and all(t.showlegend for t in fig.data)
+    assert [t.marker.color for t in fig.data] == charts.palette("light")[:2]
+    line = charts.figure(data(cdb, "line", y=["y", "big"]), "light")
+    assert line.layout.showlegend is True
+    single = charts.figure(data(cdb, "histogram", y=["y"]), "light")
+    assert single.layout.showlegend is False  # one column: no legend
+    coloured = charts.figure(data(cdb, "histogram", y=["y", "big"], color="g", bins=10), "light")
+    assert sum(1 for t in coloured.data if t.showlegend) == 3  # the series, once, in panel 1
+
+
 def test_bars_put_other_in_grey(cdb: Path) -> None:
     plot = data(cdb, "bar", x="k", max_categories=4)
     fig = charts.figure(plot, "light")

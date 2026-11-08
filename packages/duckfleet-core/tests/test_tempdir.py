@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -10,13 +11,17 @@ from pathlib import Path
 import duckdb
 import pytest
 
-from duckfleet_core import profiler
+from duckfleet_core import profiler, tempdir
 from duckfleet_core.config import ScanConfig
 from duckfleet_core.coordinator import run_scan
 from duckfleet_core.query import QueryConfig, open_readonly
 from duckfleet_core.tempdir import (
+    ensure_file_temp_dir,
+    ensure_fleet_temp_dir,
     ensure_temp_dir,
+    file_temp_dir,
     process_temp_dir,
+    remove_temp_dir,
     sweep_stale_temp_dirs,
     temp_root,
 )
@@ -37,6 +42,61 @@ def dead_pid() -> int:
 def test_process_temp_dir_is_under_the_cache(tmp_path: Path) -> None:
     assert temp_root(tmp_path) == tmp_path / "tmp"
     assert process_temp_dir(tmp_path) == tmp_path / "tmp" / str(os.getpid())
+
+
+def test_file_temp_dir_is_one_leaf_per_file_however_the_path_is_spelled(tmp_path: Path) -> None:
+    """W-01: the same file always maps to the same leaf (D-021), different files never share one."""
+    root = tmp_path / "tmp" / str(os.getpid())
+    db = tmp_path / "data" / "q é.duckdb"
+    leaf = file_temp_dir(root, db)
+    assert leaf.parent == root and re.fullmatch(r"[0-9a-f]{16}", leaf.name)
+    assert file_temp_dir(root, str(db)) == leaf  # str or Path
+    assert file_temp_dir(root, tmp_path / "data" / ".." / "data" / "q é.duckdb") == leaf
+    assert file_temp_dir(root, tmp_path / "data" / "other.duckdb") != leaf
+    if os.name == "nt":  # Windows paths are case-insensitive and accept both separators
+        assert file_temp_dir(root, str(db).upper()) == leaf
+        assert file_temp_dir(root, str(db).replace("\\", "/")) == leaf
+
+
+def test_ensure_file_temp_dir_registers_the_process_folder_only(tmp_path: Path) -> None:
+    root = tmp_path / "tmp" / str(os.getpid())
+    leaf = ensure_file_temp_dir(root, tmp_path / "a.duckdb")
+    assert Path(leaf) == file_temp_dir(root, tmp_path / "a.duckdb") and Path(leaf).is_dir()
+    assert ensure_file_temp_dir(root, tmp_path / "a.duckdb") == leaf  # idempotent
+    assert str(root) in tempdir._registered and leaf not in tempdir._registered
+
+
+def test_the_first_connection_of_a_process_sweeps_stale_folders(tmp_path: Path) -> None:
+    """P-08: a killed process leaves its folder; the next process's first connection removes it."""
+    stale = tmp_path / "tmp" / str(dead_pid())
+    stale.mkdir(parents=True)
+    (stale / "duckdb_temp_storage_DEFAULT-0.tmp").write_bytes(b"x")
+    foreign = tmp_path / "tmp" / "not-a-pid"
+    foreign.mkdir()
+    ensure_file_temp_dir(process_temp_dir(tmp_path), tmp_path / "a.duckdb")
+    assert not stale.exists() and foreign.exists()
+    # only once per process and tmp folder: a folder that shows up later stays until a scan
+    late = tmp_path / "tmp" / str(dead_pid())
+    late.mkdir()
+    ensure_file_temp_dir(process_temp_dir(tmp_path), tmp_path / "b.duckdb")
+    assert late.exists()
+
+
+def test_a_folder_outside_the_standard_layout_is_never_swept(tmp_path: Path) -> None:
+    other = tmp_path / "x" / "tmp" / str(dead_pid())
+    other.mkdir(parents=True)
+    ensure_file_temp_dir(tmp_path / "custom-root", tmp_path / "a.duckdb")
+    assert other.exists()
+
+
+def test_fleet_temp_dirs_are_distinct_and_removable(tmp_path: Path) -> None:
+    root = process_temp_dir(tmp_path)
+    first, second = ensure_fleet_temp_dir(root), ensure_fleet_temp_dir(root)
+    assert first != second and Path(first).parent == root
+    assert re.fullmatch(r"fleet-[0-9a-f]{8}", Path(first).name)
+    (Path(first) / "spill.tmp").write_bytes(b"x")
+    remove_temp_dir(first)
+    assert not Path(first).exists() and Path(second).is_dir()
 
 
 def test_ensure_temp_dir_creates_the_folder(tmp_path: Path) -> None:
@@ -109,7 +169,7 @@ def test_the_profiler_connects_with_the_sandbox_and_a_cache_temp_directory(
         "autoinstall_known_extensions": False,
         "autoload_known_extensions": False,
         "enable_external_access": False,
-        "temp_directory": str(process_temp_dir(cache_dir)),
+        "temp_directory": str(file_temp_dir(process_temp_dir(cache_dir), demo_fleet / RUN1)),
         "lock_configuration": True,
     }
     keys = list(opened)
@@ -130,3 +190,21 @@ def test_a_scan_and_a_query_connection_to_one_file_can_overlap_in_a_process(
             str(demo_fleet / RUN1), RUN1, config.model_dump(mode="json")
         )
         assert result["status"] == "ok"
+
+
+def test_two_instances_spilling_at_once_in_one_process_survive(tmp_path: Path) -> None:
+    """W-01: two threads, two files, ``memory_limit_mb=64``, a 12 M-row sort each.
+
+    With one shared temp folder (0.3.0) both instances write ``duckdb_temp_storage_DEFAULT-0.tmp``
+    and the process dies. It runs in a child process so that a regression is a failed test, not a
+    dead test run.
+    """
+    script = Path(__file__).with_name("_spill_threads.py")
+    done = subprocess.run(
+        [sys.executable, str(script), str(tmp_path)],
+        capture_output=True,
+        text=True,
+        timeout=280,
+    )
+    detail = (done.returncode, done.stdout, done.stderr)
+    assert done.returncode == 0 and done.stdout.strip() == "ok", detail

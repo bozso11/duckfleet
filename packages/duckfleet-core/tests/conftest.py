@@ -1,6 +1,7 @@
 """Shared fixtures: the demo fleet and a throw-away cache directory.
 
-Nothing here touches the real user cache or real user data.
+Nothing here touches the real user cache or real user data: an autouse fixture points every
+place that looks up ``default_cache_dir`` at a folder of the test (review W-09).
 """
 
 from __future__ import annotations
@@ -14,7 +15,25 @@ from pathlib import Path
 
 import pytest
 
+from duckfleet_core import config as core_config
+from duckfleet_core import query as core_query
 from duckfleet_core.demo import make_demo_fleet
+
+
+@pytest.fixture(autouse=True)
+def _isolated_default_cache(
+    tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """A bare ``QueryConfig()`` or ``ScanConfig()`` resolves its cache in a folder of the run.
+
+    The folder is beside, not inside, the test's ``tmp_path``: some tests assert that nothing
+    was written into their own folder.
+    """
+    default = tmp_path_factory.mktemp("default-cache")
+    # the name is bound in each module that looks it up, so each one is patched
+    monkeypatch.setattr(core_config, "default_cache_dir", lambda: default)
+    monkeypatch.setattr(core_query, "default_cache_dir", lambda: default)
+    return default
 
 
 @pytest.fixture(scope="session")

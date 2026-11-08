@@ -28,7 +28,7 @@ from duckfleet_core.models import (
 )
 from duckfleet_core.sqlutil import quote_ident
 from duckfleet_core.tags import extract_tags
-from duckfleet_core.tempdir import ensure_temp_dir, process_temp_dir
+from duckfleet_core.tempdir import ensure_file_temp_dir, process_temp_dir
 
 logger = logging.getLogger("duckfleet")
 
@@ -254,8 +254,8 @@ def _profile(
         )
 
     # The same sandbox as the query layer except threads and memory (P-05): connections to one
-    # file in one process must share a config. The temp directory is per process, under the
-    # cache, never beside the scanned file (V-01, D-034).
+    # file in one process must share a config. The temp directory is the file's leaf under the
+    # per-process folder in the cache, never beside the scanned file (V-01, D-034, W-01, D-042).
     con = duckdb.connect(
         str(path),
         read_only=True,
@@ -266,7 +266,9 @@ def _profile(
             "autoload_known_extensions": False,
             "enable_external_access": False,
             # after "enable_external_access": DuckDB refuses the temp directory once access is off
-            "temp_directory": ensure_temp_dir(process_temp_dir(config.resolved_cache_dir())),
+            "temp_directory": ensure_file_temp_dir(
+                process_temp_dir(config.resolved_cache_dir()), path
+            ),
             "lock_configuration": True,
         },
     )

@@ -30,7 +30,7 @@ from duckfleet_core.fingerprint import (
     table_variants,
 )
 from duckfleet_core.models import DatabaseProfile, ScanSummary
-from duckfleet_core.tempdir import ensure_temp_dir, process_temp_dir
+from duckfleet_core.tempdir import ensure_file_temp_dir, process_temp_dir
 
 logger = logging.getLogger("duckfleet")
 
@@ -205,7 +205,9 @@ def build_catalog(
         summary.config.model_dump_json(),
     ]  # fmt: skip
 
-    temp_dir = ensure_temp_dir(process_temp_dir(summary.config.resolved_cache_dir()))  # V-01
+    temp_dir = ensure_file_temp_dir(  # V-01, W-01
+        process_temp_dir(summary.config.resolved_cache_dir()), tmp_path
+    )
     con = duckdb.connect(
         str(tmp_path),
         config={

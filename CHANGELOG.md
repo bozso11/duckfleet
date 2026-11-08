@@ -2,11 +2,84 @@
 
 ## Unreleased
 
-1. `docs/REVIEW_v0.3.md`: review of 0.3.0 against the plan.
-2. `docs/PLAN_v0.4.md`: detailed plan for 0.3.1 (Phase 0) and v0.4 (fleet
-   connection, scope on the SQL and Plot pages, content fingerprints, CLI
-   `fleet-tables`, `fleet-sql`).
-3. Decisions D-040 to D-042; limit L-22 added.
+(Work towards 0.4.0; see `docs/PLAN_v0.4.md`. Nothing yet.)
+
+## 0.3.1 (2026-11-08)
+
+Fixes from `docs/REVIEW_v0.3.md` (plan: Phase 0 of `docs/PLAN_v0.4.md`, decisions
+D-042 and D-043). The demo fleet and its default numbers are unchanged. Also in
+this release: `docs/REVIEW_v0.3.md` (review of 0.3.0), `docs/PLAN_v0.4.md` (plan for
+0.3.1 and v0.4), decisions D-040 to D-042, limit L-22 (planning documents only).
+
+### Fixes, by review ID
+
+1. **W-01 (high)** Two DuckDB instances in one process shared one temp folder and
+   the process died when both spilled. The temp directory is now one leaf per
+   file per process, `<cache>/tmp/<pid>/<sha1(absolute path)[:16]>`
+   (`tempdir.file_temp_dir`), derived identically by the query layer
+   (`connection_config(config, db_path)`), the profiler and the catalog writer,
+   so a scan and a query connection to one file still share a config (D-021).
+   The pid sweep and the exit cleanup stay. Test: two threads, two files,
+   `memory_limit_mb=64`, a 12 M-row sort each, in a child process
+   (`_spill_threads.py`); with the old shared folder the same script ends in a
+   segmentation fault on Windows (checked), with the leaves both counts are right.
+2. **W-02** Above the 365-day rung `choose_bucket_seconds` derives a width in
+   whole days (`N days`), so the data query never exceeds the budget and no
+   `KeyError` or guard error is possible; test: 200 yearly rows over 200 years
+   with a budget of 100.
+3. **W-03** `PlotSpec.y` accepts at most 8 columns (plain message, usage error in
+   `plot`); `max_selections=8` on the page; L-19 gains the clause.
+4. **W-04** The remembered plot request carries its chart kind; another kind
+   shows nothing until Plot is pressed.
+5. **W-05** The bar query names its helper columns so that no column of the table
+   can collide (`df_c`, `df_rk`, `df_m` and the review's list of hostile names are
+   tested) and aliases its source subquery (D-043 item 2).
+6. **W-06** `seed` is bounded to 0 .. 2^31 - 1.
+7. **W-07** The `interrupt error` wording counts for `InvalidInputException` only;
+   `select 'interrupt error'::INTEGER` is a `sql` error (in the V-06 test list).
+8. **W-08** A non-finite span (a range beyond a double) falls back to the first
+   rows with a note, a non-finite histogram width is skipped with a note, and no
+   bare `ValueError` can leave `fetch_plot_data` (it becomes `QueryError`).
+9. **W-09** An autouse fixture in both `conftest.py` files points
+   `default_cache_dir` at a folder of the run; a test asserts that the real cache
+   directory of this process is untouched after a query and a plot with a bare
+   `QueryConfig()`.
+10. **W-10** The database name and the column lookup of `fetch_plot_data` run
+    through `execute_limited` under the shared deadline (`execute_limited` takes
+    bound `params`).
+11. **W-11** Documented (LIMITS 29): a real `(other)` or `(null)` value merges with
+    the fold.
+12. **W-12** DATE and TIMESTAMP_S/MS/NS x use `TRY_CAST`; rows that do not convert
+    are counted in the "left out" note (a year-1,000,000 date no longer fails the plot).
+13. **W-13** A histogram of several columns counts the columns as series for the
+    legend rule (a legend for two or more, one colour per column).
+14. **W-14** The histogram caption counts the drawn bins and the binned rows.
+15. **W-15** A problem with the choices (no y column, a spec error) shows as a
+    warning without a kind prefix.
+16. **W-16** Documented in D-038: the `(other)` bar category keeps the series colour
+    when a colour column is set.
+17. **W-17** `ARCHITECTURE.md` covers **Plot this table** and `common.file_state`;
+    LIMITS 23 names every place the environment overrides are read; `# TUNING`
+    markers and rows for `plot-defaults` (`LOW_CARDINALITY`, `default_table`) and
+    `chart-render` (`_WEBGL_FROM`, `_MARKERS_UP_TO`, the opacity threshold).
+18. **P-08** Stale `tmp/<pid>` folders are also swept on a process's first connection.
+19. **P-09, P-10** Documented (LIMITS 32 and 33).
+20. **P-11** `PlotPlan.series_kept` is removed; the budget guard also covers
+    histogram and bar (documented in L-11 and the module docstring).
+
+### Tests added (review Section 6)
+
+Two concurrent spilling instances; ladder exhaustion; hostile column names
+(`df_c`, `df_rk`, `df_m`, `x`, `s`, `n`, `cat`, `rk`, `v0`, `yi`, `b`, a quote, a
+space, `é`) on all four kinds; TIMESTAMP_S/MS/NS x; empty and one-row tables for
+every kind; `seed` bounds; `plot --format csv` and `json` through a subprocess
+with a latin-1 stdout; a guard that no test touches the real cache.
+
+### Notes
+
+1. `PROFILE_SCHEMA_VERSION` is unchanged in 0.3.1, so a rescan reuses all profiles.
+2. 660 tests (585 in 0.3.0) and `ruff check .` clean on Windows (Python 3.11.9, duckdb
+   1.5.6, streamlit 1.66.1); CI on both OSes is recorded in the next entry.
 
 ## 0.3.0 (2026-11-08)
 

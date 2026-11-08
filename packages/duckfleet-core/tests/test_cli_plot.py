@@ -5,8 +5,12 @@ from __future__ import annotations
 import csv
 import io
 import json
+import os
+import subprocess
+import sys
 from pathlib import Path
 
+import duckdb
 import pytest
 
 from duckfleet_core.cli import main
@@ -197,3 +201,71 @@ def test_nothing_is_written_to_the_working_directory(
     monkeypatch.chdir(tmp_path)
     run(capsys, *plot(scanned, "--kind", "line", "--x", "ts", "--y", "value"))
     assert list(tmp_path.iterdir()) == []
+
+
+# ---------------------------------------------------------------- through a subprocess (0.3.1)
+
+
+@pytest.fixture(scope="module")
+def unicode_fleet(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
+    base = tmp_path_factory.mktemp("cli_plot_unicode")
+    root = base / "fleet"
+    root.mkdir()
+    con = duckdb.connect(str(root / "uni.duckdb"))
+    con.execute(
+        "CREATE TABLE t AS SELECT CASE WHEN i % 2 = 0 THEN '日本語 é' ELSE 'plain' END AS k, "
+        "i::DOUBLE AS v FROM range(10) r(i)"
+    )
+    con.close()
+    cache = base / "cache"
+    run_scan(root, ScanConfig(workers=1, cache_dir=str(cache)))
+    return root, cache
+
+
+def _plot_bytes(fleet: tuple[Path, Path], *rest: str) -> tuple[int, bytes, bytes]:
+    """The real CLI in a child whose stdout would be latin-1 without the UTF-8 writer (V-03)."""
+    root, cache = fleet
+    env = {k: v for k, v in os.environ.items() if k not in ("PYTHONUTF8", "PYTHONIOENCODING")}
+    env["PYTHONIOENCODING"] = "latin-1"
+    done = subprocess.run(
+        [sys.executable, "-m", "duckfleet_core", "plot", str(root), "uni.duckdb", "main.t", *rest,
+         "--cache-dir", str(cache)],
+        capture_output=True,
+        env=env,
+        timeout=120,
+    )  # fmt: skip
+    return done.returncode, done.stdout, done.stderr
+
+
+def test_plot_csv_through_a_subprocess_is_utf8_with_lf_line_ends(unicode_fleet) -> None:
+    code, out, err = _plot_bytes(unicode_fleet, "--kind", "bar", "--x", "k", "--y", "v")
+    assert code == 0, err
+    assert out == "k,mean(v)\nplain,5.0\n日本語 é,4.0\n".encode()
+
+
+def test_plot_json_through_a_subprocess_is_utf8_one_object_per_line(unicode_fleet) -> None:
+    code, out, err = _plot_bytes(
+        unicode_fleet, "--kind", "bar", "--x", "k", "--y", "v", "--format", "json"
+    )
+    assert code == 0, err
+    lines = out.decode("utf-8").split("\n")
+    assert lines == ['{"k": "plain", "mean(v)": 5.0}', '{"k": "日本語 é", "mean(v)": 4.0}', ""]
+    assert b"\r" not in out
+
+
+def test_more_than_eight_y_columns_is_a_usage_error(scanned, capsys) -> None:
+    """W-03: the CLI reports the spec limit as a usage error (exit 1)."""
+    names = ",".join(f"c{i}" for i in range(9))
+    code, out, err = run(capsys, *plot(scanned, "--kind", "line", "--x", "ts", "--y", names))
+    assert code == 1 and out == ""
+    assert "at most 8 y columns can be plotted at once (got 9)" in err
+
+
+def test_a_seed_is_not_a_cli_option_but_a_bad_spec_value_is_a_usage_error() -> None:
+    """W-06: the spec rejects a seed outside the reservoir range before any SQL runs."""
+    from pydantic import ValidationError
+
+    from duckfleet_core.plotdata import PlotSpec
+
+    with pytest.raises(ValidationError):
+        PlotSpec(schema_name="main", table_name="events", kind="scatter", y=["value"], seed=-5)

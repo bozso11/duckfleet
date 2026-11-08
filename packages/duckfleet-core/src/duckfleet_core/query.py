@@ -35,7 +35,7 @@ from pydantic import BaseModel, Field
 
 from duckfleet_core.config import default_cache_dir
 from duckfleet_core.sqlutil import qualified_name, quote_ident
-from duckfleet_core.tempdir import ensure_temp_dir, process_temp_dir
+from duckfleet_core.tempdir import ensure_file_temp_dir, process_temp_dir
 
 T = TypeVar("T")
 
@@ -60,8 +60,9 @@ class QueryConfig(BaseModel):
     preview_max_columns: int = Field(default=50, ge=1)  # L-15
     stats_row_threshold: int = 20_000_000  # L-05, TUNING(stats-threshold)
     stats_sample_rows: int = 1_000_000  # L-06, TUNING(stats-threshold)
-    # DuckDB's temp directory (V-01, D-034): None means <default cache>/tmp/<pid>; the CLI and
-    # the UI pass <their cache dir>/tmp/<pid>. Part of the one-config-per-process rule (D-021).
+    # The per-process root of DuckDB's temp directories (V-01, D-034): None means
+    # <default cache>/tmp/<pid>; the CLI and the UI pass <their cache dir>/tmp/<pid>. Each file
+    # gets a leaf of its own below it (W-01, D-042), see tempdir.file_temp_dir.
     temp_dir: str | None = None
 
     def resolved_threads(self) -> int:
@@ -112,11 +113,13 @@ class QueryResult:
 # ---------------------------------------------------------------- connection
 
 
-def connection_config(config: QueryConfig) -> dict[str, Any]:
-    """The connect ``config`` of every connection to a scanned file (decisions D-021, D-034).
+def connection_config(config: QueryConfig, db_path: str | Path) -> dict[str, Any]:
+    """The connect ``config`` of every connection to the scanned file ``db_path`` (D-021, D-042).
 
-    ``temp_directory`` is created here, before connecting; without it DuckDB would spill
-    into ``<database path>.tmp`` beside the scanned file (review V-01). The key order matters
+    ``temp_directory`` is the leaf of this file under the process folder
+    (``tempdir.file_temp_dir``), created here before connecting: without it DuckDB would spill
+    into ``<database path>.tmp`` beside the scanned file (review V-01), and two DuckDB
+    instances (two files) must never share one folder (review W-01). The key order matters
     (see the comment below).
     """
     return {
@@ -127,7 +130,7 @@ def connection_config(config: QueryConfig) -> dict[str, Any]:
         "enable_external_access": False,
         # DuckDB applies the options in this order and refuses to change the temp directory once
         # external access is off, so this key must stay after "enable_external_access".
-        "temp_directory": ensure_temp_dir(config.resolved_temp_dir()),
+        "temp_directory": ensure_file_temp_dir(config.resolved_temp_dir(), db_path),
         "lock_configuration": True,
     }
 
@@ -137,7 +140,9 @@ def open_readonly(
     db_path: str | Path, config: QueryConfig
 ) -> Iterator[duckdb.DuckDBPyConnection]:
     """Open ``db_path`` read-only under the sandbox config and close it afterwards."""
-    con = duckdb.connect(str(db_path), read_only=True, config=connection_config(config))
+    con = duckdb.connect(
+        str(db_path), read_only=True, config=connection_config(config, db_path)
+    )
     try:
         yield con
     finally:
@@ -169,9 +174,12 @@ def classify_error(exc: BaseException) -> QueryError:
     lower = text.lower()
     kind: ErrorKind
     if isinstance(exc, duckdb.InterruptException) or (
-        isinstance(exc, duckdb.Error) and _INTERRUPTED in lower
+        isinstance(exc, duckdb.InvalidInputException) and _INTERRUPTED in lower
     ):
-        kind = "timeout"  # a fetch interrupted mid-stream may arrive as an InvalidInputException
+        # a fetch interrupted mid-stream arrives as an InvalidInputException (V-02); the wording
+        # is looked at for that type only, so SQL text echoed in another error cannot set the
+        # kind (W-07: ``select 'interrupt error'::INTEGER`` is a ConversionException)
+        kind = "timeout"
     elif isinstance(exc, duckdb.PermissionException):
         kind = "blocked"
     elif isinstance(exc, duckdb.InvalidInputException):
@@ -258,15 +266,21 @@ def _with_timeout(con: duckdb.DuckDBPyConnection, fn: Callable[[], T], timeout_s
 
 
 def execute_limited(
-    con: duckdb.DuckDBPyConnection, sql: str, max_rows: int, timeout_s: float
+    con: duckdb.DuckDBPyConnection,
+    sql: str,
+    max_rows: int,
+    timeout_s: float,
+    *,
+    params: list[Any] | None = None,
 ) -> QueryResult:
+    """Run ``sql`` (with optional bound ``params``) under the timeout and fetch ``max_rows``."""
     started = time.perf_counter()
     statements = len(con.extract_statements(sql))  # a parser error is a DuckDB error
     if statements == 0:
         raise QueryError("sql", "no SQL statement to run")
 
     def work() -> tuple[list[str], list[str], list[tuple], bool]:
-        cursor = con.execute(sql)
+        cursor = con.execute(sql, params) if params else con.execute(sql)
         if cursor.description is None:  # a statement without a result set
             return [], [], [], False
         names = [str(d[0]) for d in cursor.description]
@@ -357,22 +371,40 @@ def export_query(
 # ---------------------------------------------------------------- tables and previews
 
 
-def database_name(con: duckdb.DuckDBPyConnection) -> str:
-    row = con.execute("select database_name from duckdb_databases() where not internal").fetchone()
+_DATABASE_NAME_SQL = "select database_name from duckdb_databases() where not internal"
+_COLUMNS_SQL = (
+    "select column_name, data_type from duckdb_columns() "
+    "where database_name = ? and schema_name = ? and table_name = ? and not internal "
+    "order by column_index"
+)
+
+
+def database_name(con: duckdb.DuckDBPyConnection, *, timeout_s: float | None = None) -> str:
+    """The name of the one database of a scanned file; under ``timeout_s`` when given (W-10)."""
+    if timeout_s is None:
+        row = con.execute(_DATABASE_NAME_SQL).fetchone()
+    else:
+        rows = execute_limited(con, _DATABASE_NAME_SQL, 1, timeout_s).rows
+        row = rows[0] if rows else None
     if row is None:
         raise QueryError("other", "the file holds no database")
     return str(row[0])
 
 
 def _table_columns(
-    con: duckdb.DuckDBPyConnection, db_name: str, schema_name: str, table_name: str
+    con: duckdb.DuckDBPyConnection,
+    db_name: str,
+    schema_name: str,
+    table_name: str,
+    *,
+    timeout_s: float | None = None,
 ) -> list[tuple[str, str]]:
-    rows = con.execute(
-        "select column_name, data_type from duckdb_columns() "
-        "where database_name = ? and schema_name = ? and table_name = ? and not internal "
-        "order by column_index",
-        [db_name, schema_name, table_name],
-    ).fetchall()
+    """``(column, type)`` of a table or view; under ``timeout_s`` when given (W-10)."""
+    params = [db_name, schema_name, table_name]
+    if timeout_s is None:
+        rows = con.execute(_COLUMNS_SQL, params).fetchall()
+    else:
+        rows = execute_limited(con, _COLUMNS_SQL, 100_000, timeout_s, params=params).rows
     return [(str(name), str(data_type)) for name, data_type in rows]
 
 

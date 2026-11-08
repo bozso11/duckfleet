@@ -1,24 +1,36 @@
-"""Per-process DuckDB temp directories under the cache (review V-01, decision D-034).
+"""DuckDB temp directories under the cache: one folder per file per process (D-034, D-042).
 
 DuckDB's default ``temp_directory`` is ``<database path>.tmp``, i.e. beside the
 scanned file, and a query that spills past its memory limit creates it even on a
-read-only connection. Every connection duckfleet opens therefore passes
-``<cache_dir>/tmp/<pid>`` instead. Each process gets its own folder because
-whether several DuckDB instances can share one temp directory safely is not
-verified; the folder is created before connecting, removed when the process
-exits (best effort) and swept by ``run_scan`` when its process no longer exists.
+read-only connection (review V-01). Every connection duckfleet opens therefore passes
+a folder under the cache instead.
+
+Two DuckDB instances in one process must never share a temp folder: when both spill
+they write the same ``duckdb_temp_storage_DEFAULT-0.tmp`` and the process dies
+(review W-01). Connections to one file with an identical config share one DuckDB
+instance (D-021), so the folder is derived from the file:
+``<cache dir>/tmp/<pid>/<sha1(absolute path)[:16]>``, built by ``file_temp_dir`` and
+used by the query layer, the profiler and the catalog writer alike. A fleet connection
+(several files, one in-memory instance) gets a folder of its own, ``fleet-<8 hex>``.
+
+The ``<pid>`` folder is created before connecting and removed when the process exits
+(best effort); folders of processes that no longer exist are swept by ``run_scan`` and
+on the first connection of every process (review P-08).
 """
 
 from __future__ import annotations
 
 import atexit
+import hashlib
 import os
 import shutil
+import uuid
 from pathlib import Path
 
 import psutil
 
 _registered: set[str] = set()
+_swept: set[str] = set()
 
 
 def temp_root(cache_dir: Path | str) -> Path:
@@ -29,6 +41,22 @@ def temp_root(cache_dir: Path | str) -> Path:
 def process_temp_dir(cache_dir: Path | str) -> Path:
     """``<cache_dir>/tmp/<pid>`` for this process."""
     return temp_root(cache_dir) / str(os.getpid())
+
+
+def file_temp_dir(root: Path | str, abs_path: Path | str) -> Path:
+    """``<root>/<sha1(absolute path)[:16]>``: the temp folder of the DuckDB instance of one file.
+
+    ``root`` is the per-process folder. The path is made absolute and case-normalised
+    (Windows) first, so the same file always maps to the same folder however it is spelled;
+    that keeps one config per file per process (D-021).
+    """
+    normal = os.path.normcase(os.path.abspath(os.fspath(abs_path)))
+    return Path(root) / hashlib.sha1(normal.encode("utf-8")).hexdigest()[:16]
+
+
+def fleet_temp_dir(root: Path | str) -> Path:
+    """``<root>/fleet-<8 hex>``: a new folder name for one fleet connection (not created)."""
+    return Path(root) / f"fleet-{uuid.uuid4().hex[:8]}"
 
 
 def _remove(path: str) -> None:
@@ -43,6 +71,45 @@ def ensure_temp_dir(path: Path | str) -> str:
         _registered.add(text)
         atexit.register(_remove, text)
     return text
+
+
+def _sweep_once(root: Path) -> None:
+    """Sweep stale folders before the first connection that uses this process folder (P-08)."""
+    if root.name != str(os.getpid()) or root.parent.name != "tmp":
+        return  # not the standard layout: never look at a folder we did not name
+    key = str(root.parent)
+    if key in _swept:
+        return
+    _swept.add(key)
+    sweep_stale_temp_dirs(root.parent.parent)
+
+
+def ensure_file_temp_dir(root: Path | str, abs_path: Path | str) -> str:
+    """Create the process folder ``root`` and the leaf of ``abs_path``; return the leaf as text.
+
+    Only ``root`` is registered for removal at exit; the leaf goes with it.
+    """
+    root = Path(root)
+    _sweep_once(root)
+    ensure_temp_dir(root)
+    leaf = file_temp_dir(root, abs_path)
+    leaf.mkdir(parents=True, exist_ok=True)
+    return str(leaf)
+
+
+def ensure_fleet_temp_dir(root: Path | str) -> str:
+    """Create a new fleet leaf under ``root`` and return it; the caller removes it when done."""
+    root = Path(root)
+    _sweep_once(root)
+    ensure_temp_dir(root)
+    leaf = fleet_temp_dir(root)
+    leaf.mkdir(parents=True, exist_ok=True)
+    return str(leaf)
+
+
+def remove_temp_dir(path: Path | str) -> None:
+    """Remove a leaf (best effort; DuckDB may still hold a handle on Windows for a moment)."""
+    shutil.rmtree(path, ignore_errors=True)
 
 
 def sweep_stale_temp_dirs(cache_dir: Path | str) -> list[str]:

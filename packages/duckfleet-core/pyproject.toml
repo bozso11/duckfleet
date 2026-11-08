@@ -1,6 +1,6 @@
 [project]
 name = "duckfleet-core"
-version = "0.3.0"
+version = "0.3.1"
 description = "Discover, profile and fingerprint a folder tree of DuckDB files (no UI dependency)"
 requires-python = ">=3.11,<3.14"
 dependencies = [

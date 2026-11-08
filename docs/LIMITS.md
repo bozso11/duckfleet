@@ -5,7 +5,7 @@ happens beyond it. Numbers marked (TBC) are proposals. The v0.1 and v0.2
 acceptance runs used the demo fleet only, so they stay (TBC) until a real
 fleet has been scanned.
 
-Last updated: 2026-11-08 (0.3.0).
+Last updated: 2026-11-08 (0.3.1).
 
 | ID | Limit | Default | Config | Beyond the limit | Since |
 |---|---|---|---|---|---|
@@ -19,7 +19,7 @@ Last updated: 2026-11-08 (0.3.0).
 | L-08 | Data preview page | 1,000 rows (TBC) | `QueryConfig.preview_rows` | paging; the page number input is bounded by the catalog's row count | v0.2 |
 | L-09 | SQL result in grid / download | 10 k rows shown (page option 1 to 100 k), 1 M rows download (TBC) | `QueryConfig.max_rows`, `max_download_rows` | grid truncated with a notice; download cut at the cap with a warning (D-023) | v0.2 |
 | L-10 | Worker crash | n/a | | a crashed pool marks the unfinished files `worker_crashed`; rerun the scan | v0.1 |
-| L-11 | Points per chart | 50 k after bucketing (TBC) | `PlotSpec.max_points` (page option, `--max-points`) | line charts become bucket aggregates (mean, min, max), scatter charts a reservoir sample; histograms and bars are bounded by L-18 to L-20 instead; the final query is checked against the budget | v0.3 |
+| L-11 | Points per chart | 50 k after bucketing (TBC) | `PlotSpec.max_points` (page option, `--max-points`) | line charts become bucket aggregates (mean, min, max), scatter charts a reservoir sample; histograms and bars are bounded by L-18 to L-20 instead; the final query is checked against the budget, and the same guard checks histogram and bar results against their own bounds | v0.3 |
 | L-12 | Databases attached at once | 50 (TBC) | | pick a subset | v0.4 |
 | L-13 | Recent roots remembered | 20 | | oldest dropped | v0.1 |
 | L-14 | Query timeout (SQL page, preview, summary, CLI) | 60 s (page option 1 to 3,600 s) (TBC) | `QueryConfig.timeout_s` | the query is interrupted and reported as `timeout`; the connection stays usable (D-024). A phase that never checks the interrupt (one huge allocation, the Arrow conversion of an export) can delay the stop; it is bounded and was never a hang in testing | v0.2 |
@@ -27,7 +27,7 @@ Last updated: 2026-11-08 (0.3.0).
 | L-16 | Per-column summary (`SUMMARIZE`) | exact up to L-05 rows, sampled above with L-06 rows | `QueryConfig.stats_row_threshold`, `stats_sample_rows` | `sampled=True` in the summary caption | v0.2 |
 | L-17 | Query connection threads and memory | `min(4, cpu_count)` threads, `min(4 GB, RAM/4)` memory, floor 512 MB (TBC) | `QueryConfig.threads`, `memory_limit_mb`, env `DUCKFLEET_QUERY_THREADS`, `DUCKFLEET_QUERY_MEMORY_MB` | resolved once per process (D-021); DuckDB spills or fails the query at the memory limit | v0.2 |
 | L-18 | Bar chart categories | 200 (TBC) | `PlotSpec.max_categories` | the rest summed into `(other)`, said in the caption | v0.3 |
-| L-19 | Plot series (colour values) | 8 for line, histogram, bar; 3 for scatter (TBC) | `PlotSpec.max_series` | the top series by row count kept, the rest folded into one grey `(other)` series (D-032) | v0.3 |
+| L-19 | Plot series (colour values) | 8 for line, histogram, bar; 3 for scatter (TBC) | `PlotSpec.max_series` | the top series by row count kept, the rest folded into one grey `(other)` series (D-032); at most 8 y columns per plot (one colour each), more is rejected by the spec on the page and in `duckfleet plot` (0.3.1, W-03) | v0.3 |
 | L-20 | Histogram bins | 50, range 5 to 500 (TBC) | `PlotSpec.bins` | rejected outside the range | v0.3 |
 | L-21 | Plot point budget (page option) | 50,000, range 100 to 500,000 (TBC); same as L-11 | `PlotSpec.max_points` | bucketing, sampling or folding reduces the data in DuckDB until it fits; the plot queries run under L-14 | v0.3 |
 | L-22 | Databases in one fleet connection (SQL and Plot scope, CLI `--databases`, `--family`, `--all`) | 50, same as L-12 | `FleetSelection` | a larger family is cut to the first 50 by rel_path with a caption; the CLI refuses more as a usage error | v0.4 |
@@ -117,16 +117,23 @@ Last updated: 2026-11-08 (0.3.0).
 22. **Summaries of views.** `SUMMARIZE` of a view runs the view's query and is
     not sampled (the row count of a view is unknown); it can reach the timeout.
 23. **One query config per process.** `DUCKFLEET_QUERY_THREADS` and
-    `DUCKFLEET_QUERY_MEMORY_MB` are read at the first `query_config()` call
-    (the first render of the SQL page or of the Preview tab), not when the
-    first query runs; restart `duckfleet-ui` to change them.
-24. **DuckDB temp directory (0.2.1).** Every connection duckfleet opens uses
-    `<cache dir>/tmp/<pid>` as DuckDB's `temp_directory`; without it DuckDB
-    would spill into `<database path>.tmp` beside the scanned file (D-034).
-    The folder is created before connecting and removed when the process
-    exits; `scan` removes folders of processes that no longer exist. A query
-    that needs more than the memory limit spills into that folder, so the
-    cache drive needs free space for it.
+    `DUCKFLEET_QUERY_MEMORY_MB` are read at the first `query_config()` call, not
+    when the first query runs. That call happens at the first render of the SQL
+    page, the first open Preview tab of the Database page, the first summary
+    computed there, or the first **Plot** press on the Plot page (the cached
+    preview and plot functions call it); restart `duckfleet-ui` to change them.
+24. **DuckDB temp directory (0.2.1, one folder per file since 0.3.1).** Every
+    connection duckfleet opens uses a folder under `<cache dir>/tmp/<pid>` as
+    DuckDB's `temp_directory`: `<pid>/<sha1(absolute path)[:16]>`, one leaf per
+    file per process (W-01, D-042); a fleet connection uses `<pid>/fleet-<8 hex>`
+    and removes it when the connection closes. Without it DuckDB would spill into
+    `<database path>.tmp` beside the scanned file (D-034), and two DuckDB
+    instances in one process sharing one folder crash the process when both
+    spill. The `<pid>` folder is created before connecting and removed when the
+    process exits; stale folders of processes that no longer exist are removed by
+    `scan` and on a process's first connection (P-08). A query that needs more
+    than the memory limit spills into that folder, so the cache drive needs free
+    space for it.
 25. **Preview cache (0.2.1).** Preview pages are cached by the Streamlit
     cache, keyed by the database file's current size and mtime, so a file that
     changed after the scan shows its new rows (the header says it changed).
@@ -147,8 +154,9 @@ Last updated: 2026-11-08 (0.3.0).
 29. **Series.** A colour column shows at most 8 series (3 on a scatter chart,
     L-19); the rest is one grey `(other)` series, NULL values are a grey
     `(null)` series. The top series are chosen by row count of the filtered
-    table. A value that is literally `(other)` or `(null)` cannot be told from
-    the fold.
+    table. A real value that is literally `(other)` or `(null)` (a colour
+    value, or a bar category) merges with the folded tail or the NULL series
+    and cannot be told from it (W-11).
 30. **Bucket grid.** Time buckets are aligned to the origin of DuckDB's
     `time_bucket` (epoch for sub-day widths, a Monday for 7 days) and labelled
     by their start; the 30, 90 and 365 day widths are fixed day counts, not
@@ -157,3 +165,12 @@ Last updated: 2026-11-08 (0.3.0).
 31. **Plot cache.** Plot data is cached by the Streamlit cache (16 entries),
     keyed by the file's current size and mtime and the spec; a file that
     changes without a new size or mtime is not noticed.
+32. **Chart theme after a theme change (0.3.1, P-09).** The Plot page reads
+    Streamlit's theme (`st.context.theme.type`) on every run; it may be wrong on
+    the first load and right after the user changes the theme, and the chart then
+    keeps the wrong palette until the next rerun. The **Chart theme** option on
+    the page (light or dark) is the workaround.
+33. **stderr encoding on Windows (0.3.1, P-10).** `--show-sql`, the summary line
+    and the notes of `duckfleet plot` go to stderr in the console encoding, so
+    non-ASCII identifiers can print as `?`; set `PYTHONUTF8=1` to see them. The
+    data on stdout (`--format csv` or `json`) is always UTF-8 (item 26).

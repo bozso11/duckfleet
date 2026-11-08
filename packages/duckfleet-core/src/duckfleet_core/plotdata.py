@@ -5,9 +5,13 @@ DuckDB: ``time_bucket`` with mean, min and max for a temporal x, equal-width buc
 a numeric x, equal-width bins for histograms, a reservoir sample for scatter charts and
 top-N folding for series and bar categories.
 
-``fetch_plot_data`` runs at most three queries on one sandboxed connection (the column
-lookup, one statement with the counts the plan needs, and the data query), all inside one
-timeout. Identifiers are quoted; the filter is inserted as ``WHERE (...)`` text and is
+``fetch_plot_data`` runs at most four queries on one sandboxed connection (the database
+name and the column lookup, one statement with the counts the plan needs, and the data
+query), all inside one timeout (review W-10). The data query is checked against the most
+rows its plan can legitimately return: the point budget for line and scatter charts, and
+the bin and category bounds for histograms and bars.
+
+Identifiers are quoted; the filter is inserted as ``WHERE (...)`` text and is
 the only free SQL; every other value in the SQL text is a number computed here. Data
 values never enter the SQL text: series folding uses a CTE of the top values.
 """
@@ -52,6 +56,8 @@ BUCKET_NAMES = {
     7776000: "90 days", 31536000: "365 days",
 }  # fmt: skip
 
+MAX_Y_COLUMNS = 8  # W-03: one palette slot per y column (D-032)
+_DAY_SECONDS = 86_400
 OTHER = "(other)"
 NULL_SERIES = "(null)"
 ROW_ORDER = "(row order)"
@@ -82,12 +88,17 @@ class PlotSpec(BaseModel):
     agg: Agg = "mean"
     max_categories: int = Field(default=200, ge=1)  # L-18
     max_series: int | None = Field(default=None, ge=1)  # L-19
-    seed: int = 42
+    seed: int = Field(default=42, ge=0, le=2**31 - 1)  # REPEATABLE takes a non-negative 31-bit seed
 
     @field_validator("y")
     @classmethod
     def _unique_y(cls, value: list[str]) -> list[str]:
-        return list(dict.fromkeys(value))
+        names = list(dict.fromkeys(value))
+        if len(names) > MAX_Y_COLUMNS:
+            raise ValueError(
+                f"at most {MAX_Y_COLUMNS} y columns can be plotted at once (got {len(names)})"
+            )
+        return names
 
     @field_validator("where")
     @classmethod
@@ -136,7 +147,6 @@ class PlotPlan:
     bucket_seconds: float | None = None
     bucket_width: float | None = None
     sample_rows: int | None = None
-    series_kept: list[str] = field(default_factory=list)
     folded_series: int = 0
     x_expr: str = ""
     x_type: str | None = None
@@ -161,16 +171,26 @@ def series_slots(n_series: int, max_series: int, has_null: bool) -> int:
 
 
 def choose_bucket_seconds(span_seconds: float, budget_rows: int, n_series: int) -> int:
-    """The smallest ladder width whose buckets fit the budget (plan Section 3.2).
+    """The smallest width whose buckets fit the budget (plan Section 3.2, review W-02).
 
     A span can touch ``ceil(span / width) + 1`` buckets of a fixed grid, so that is what is
-    counted per series. If even the widest width overshoots the widest is used.
+    counted per series. Above the ladder (even 365 days overshoots) the width is derived:
+    ``ceil(span / max(1, budget_rows // n_series - 1))`` rounded up to whole days, which is not
+    in ``BUCKET_NAMES`` and is written ``N days``.
     """
     # TUNING(bucket-ladder)
     for width in BUCKET_LADDER_SECONDS:
         if (math.ceil(span_seconds / width) + 1) * n_series <= budget_rows:
             return width
-    return BUCKET_LADDER_SECONDS[-1]
+    per_series = max(1, budget_rows // max(1, n_series) - 1)
+    days = math.ceil(math.ceil(span_seconds / per_series) / _DAY_SECONDS)
+    return max(days, BUCKET_LADDER_SECONDS[-1] // _DAY_SECONDS + 1) * _DAY_SECONDS
+
+
+def bucket_interval(width_seconds: int) -> str:
+    """The interval text of a bucket width: a ladder name, else whole days (``N days``)."""
+    name = BUCKET_NAMES.get(width_seconds)
+    return name if name is not None else f"{width_seconds // _DAY_SECONDS} days"
 
 
 def _base_type(data_type: str) -> str:
@@ -188,7 +208,8 @@ def x_expression(
 
     Temporal x: ``DATE`` and ``TIMESTAMP_S/MS/NS`` are cast to ``TIMESTAMP``,
     ``TIMESTAMP WITH TIME ZONE`` becomes naive UTC; numeric x is cast to ``DOUBLE``. Rows
-    whose x is NULL or not finite cannot be placed on an axis and are left out.
+    whose x is NULL, not finite or out of the TIMESTAMP range cannot be placed on an axis and
+    are left out.
     """
     if spec.kind == "histogram":
         return "", None, None
@@ -206,7 +227,9 @@ def x_expression(
         elif data_type.upper() == "TIMESTAMP WITH TIME ZONE":
             expr = f"({column} AT TIME ZONE 'UTC')"
         else:  # DATE, TIMESTAMP_S, TIMESTAMP_MS, TIMESTAMP_NS
-            expr = f"CAST({column} AS TIMESTAMP)"
+            # TRY_CAST: a DATE beyond the TIMESTAMP range becomes NULL, so that row is left out
+            # and counted instead of failing the whole plot (W-12)
+            expr = f"TRY_CAST({column} AS TIMESTAMP)"
         return expr, "TIMESTAMP", f"{expr} IS NOT NULL AND isfinite({expr})"
     expr = f"CAST({column} AS DOUBLE)"
     predicate = f"{column} IS NOT NULL"
@@ -221,7 +244,6 @@ def plan_plot(
     rows: int,
     span_seconds: float | None,
     n_series: int,
-    series_top: list[str] | None = None,
     column_types: dict[str, str] | None = None,
     x_min: float | None = None,
     has_null_series: bool = False,
@@ -234,7 +256,7 @@ def plan_plot(
     ``rows`` are the rows that can be plotted (after the filter and without unusable x),
     ``span_seconds`` the span of x (seconds for a temporal x, the numeric range otherwise),
     ``n_series`` the number of distinct non-null colour values (0 without a colour column),
-    ``series_top`` the kept series when already known, ``y_ranges`` per y column
+    ``y_ranges`` per y column
     ``(finite rows, min, max)`` for histograms, ``n_categories`` the distinct categories of
     a bar chart.
     """
@@ -244,7 +266,6 @@ def plan_plot(
     slots = series_slots(n_series, max_series, has_null_series) if spec.color else 1
     plan = PlotPlan(
         strategy="raw",
-        series_kept=list(series_top or []),
         folded_series=folded,
         x_expr=x_expr,
         x_type=x_type,
@@ -262,7 +283,11 @@ def plan_plot(
                 plan.notes.append(f"{column}: no finite values")
                 continue
             if high > low:
-                plan.hist.append(HistBins(column, low, (high - low) / spec.bins, spec.bins, count))
+                width = (high - low) / spec.bins
+                if not math.isfinite(width):  # W-08: a range that overflows a double
+                    plan.notes.append(f"{column}: the value range is too wide to bin")
+                    continue
+                plan.hist.append(HistBins(column, low, width, spec.bins, count))
             else:  # a constant column: one bin of width 1 centred on the value
                 plan.hist.append(HistBins(column, low - 0.5, 1.0, 1, count))
         return plan
@@ -282,17 +307,18 @@ def plan_plot(
 
     # line chart above the budget: bucket x
     span = span_seconds if span_seconds is not None else 0.0
-    if span <= 0:
+    if span <= 0 or not math.isfinite(span):
+        # no usable span to bucket (a single x value, or a range that overflows a double, W-08):
+        # the first rows in x order are shown instead
         plan.row_limit = budget
-        plan.notes.append(
-            f"every x value is the same; the first {budget:,} of {rows:,} rows are shown"
-        )
+        why = "every x value is the same" if span <= 0 else "the x range is too wide to bucket"
+        plan.notes.append(f"{why}; the first {budget:,} of {rows:,} rows are shown")
         return plan
     if x_type == "TIMESTAMP":
         width = choose_bucket_seconds(span, budget, slots)
         plan.strategy = "time_bucket"
         plan.bucket_seconds = float(width)
-        plan.bucket_label = BUCKET_NAMES[width]
+        plan.bucket_label = bucket_interval(width)
         plan.n_buckets = math.ceil(span / width) + 1
         return plan
     buckets = max(1, budget // slots)
@@ -320,10 +346,19 @@ def _check_columns(spec: PlotSpec, known: dict[str, str]) -> None:
 
 
 def validate_spec(
-    con: duckdb.DuckDBPyConnection, db_name: str, spec: PlotSpec
+    con: duckdb.DuckDBPyConnection,
+    db_name: str,
+    spec: PlotSpec,
+    *,
+    timeout_s: float | None = None,
 ) -> dict[str, str]:
-    """``{column: type}`` of the table; raises ``QueryError(kind="sql")`` for a bad spec."""
-    columns = _table_columns(con, db_name, spec.schema_name, spec.table_name)
+    """``{column: type}`` of the table; raises ``QueryError(kind="sql")`` for a bad spec.
+
+    The column lookup runs under ``timeout_s`` when given (W-10).
+    """
+    columns = _table_columns(
+        con, db_name, spec.schema_name, spec.table_name, timeout_s=timeout_s
+    )
     if not columns:
         raise QueryError("sql", f"unknown table or view {spec.schema_name}.{spec.table_name}")
     known = dict(columns)
@@ -457,7 +492,7 @@ def _sql_sample(spec: PlotSpec, plan: PlotPlan, parts: _Parts) -> str:
 def _sql_buckets(spec: PlotSpec, plan: PlotPlan, parts: _Parts) -> str:
     if plan.strategy == "time_bucket":
         width = int(plan.bucket_seconds or 1)
-        x_out = f"time_bucket(INTERVAL '{BUCKET_NAMES[width]}', {plan.x_expr})"
+        x_out = f"time_bucket(INTERVAL '{bucket_interval(width)}', {plan.x_expr})"
     else:
         origin = _literal(plan.x_origin or 0.0)
         step = _literal(plan.bucket_width or 1.0)
@@ -510,15 +545,34 @@ def _sql_histogram(spec: PlotSpec, plan: PlotPlan, parts: _Parts) -> str:
     return _with(parts.series_cte) + "\nUNION ALL\n".join(selects)
 
 
-def _sql_bar(spec: PlotSpec, plan: PlotPlan, parts: _Parts) -> str:
+def _free_name(name: str, taken: set[str]) -> str:
+    """``name``, with underscores prepended until it is not a column of the table."""
+    while name in taken:
+        name = "_" + name
+    return name
+
+
+def _sql_bar(
+    spec: PlotSpec, plan: PlotPlan, parts: _Parts, column_names: set[str] | None = None
+) -> str:
+    """The bar query: categories ranked in a CTE, then joined back to fold the tail.
+
+    The CTE's columns are named so that no column of the table has the same name (W-05): the
+    join exposes both sides, and an unqualified table column such as ``df_c`` would otherwise be
+    ambiguous. The source subquery is aliased as well.
+    """
+    taken = column_names or set()
+    cat_col = quote_ident(_free_name(_RANK_CATEGORY, taken))
+    num_col = quote_ident(_free_name(_RANK_NUMBER, taken))
+    measure_col = quote_ident(_free_name("df_m", taken))
     measures = [_measure(spec.agg, name) for name in spec.y] or ["count(*)"]
     category = plan.x_expr
-    rank, number = f"{_RANK_CTE}.{_RANK_NUMBER}", f"{_RANK_CTE}.{_RANK_CATEGORY}"
+    rank, number = f"{_RANK_CTE}.{num_col}", f"{_RANK_CTE}.{cat_col}"
     ranked = (
-        f"{_RANK_CTE} AS (SELECT {_RANK_CATEGORY}, row_number() OVER "
-        f"(ORDER BY df_m DESC NULLS LAST, {_RANK_CATEGORY}) AS {_RANK_NUMBER} FROM "
-        f"(SELECT {category} AS {_RANK_CATEGORY}, {measures[0]} AS df_m FROM {parts.table} "
-        f"WHERE {parts.outer_where} GROUP BY 1))"
+        f"{_RANK_CTE} AS (SELECT {cat_col}, row_number() OVER "
+        f"(ORDER BY {measure_col} DESC NULLS LAST, {cat_col}) AS {num_col} FROM "
+        f"(SELECT {category} AS {cat_col}, {measures[0]} AS {measure_col} FROM {parts.table} "
+        f"WHERE {parts.outer_where} GROUP BY 1) AS df_src)"
     )
     keep = spec.max_categories
     columns = [f"CASE WHEN {rank} <= {keep} THEN {category} ELSE '{OTHER}' END AS cat"]
@@ -540,7 +594,7 @@ def _sql_bar(spec: PlotSpec, plan: PlotPlan, parts: _Parts) -> str:
 def build_sql(
     spec: PlotSpec, plan: PlotPlan, db_name: str, column_types: dict[str, str] | None = None
 ) -> str:
-    """The data query of ``plan`` (``column_types`` is accepted for symmetry with the plan)."""
+    """The data query of ``plan``; ``column_types`` names the table's columns (bar helper names)."""
     parts = _parts(spec, plan, db_name)
     if plan.strategy == "raw":
         return _sql_raw(spec, plan, parts)
@@ -550,7 +604,7 @@ def build_sql(
         return _sql_buckets(spec, plan, parts)
     if plan.strategy == "histogram":
         return _sql_histogram(spec, plan, parts)
-    return _sql_bar(spec, plan, parts)
+    return _sql_bar(spec, plan, parts, set(column_types or {}))
 
 
 # ---------------------------------------------------------------- the counts query
@@ -731,6 +785,10 @@ def _fetch_cap(spec: PlotSpec, plan: PlotPlan) -> int:
         return max(1, spec.bins * len(spec.y) * slots)
     if plan.strategy == "bar":
         return (spec.max_categories + 1) * slots
+    if plan.strategy == "time_bucket":
+        # at least two buckets per series are possible (a span can straddle a grid boundary), so
+        # a budget below 2 rows per series slot is exceeded by that and no more (W-02)
+        return max(plan.budget_rows, (plan.n_buckets or 0) * slots)
     return plan.budget_rows
 
 
@@ -754,8 +812,8 @@ def fetch_plot_data(db_path: str | Path, spec: PlotSpec, config: QueryConfig) ->
         return left
 
     with as_query_errors(), open_readonly(db_path, config) as con:
-        db_name = database_name(con)
-        column_types = validate_spec(con, db_name, spec)
+        db_name = database_name(con, timeout_s=remaining())
+        column_types = validate_spec(con, db_name, spec, timeout_s=remaining())
         # the plan needs numbers that only the data can give: a first plan fixes the expressions
         draft = plan_plot(spec, rows=0, span_seconds=None, n_series=0, column_types=column_types)
         counts_sql, meaning = _counts_sql(spec, draft, db_name)
@@ -774,7 +832,10 @@ def fetch_plot_data(db_path: str | Path, spec: PlotSpec, config: QueryConfig) ->
             y_ranges=counts.y_ranges,
             n_categories=counts.n_categories,
         )
-        sql = build_sql(spec, plan, db_name, column_types)
+        try:
+            sql = build_sql(spec, plan, db_name, column_types)
+        except ValueError as exc:  # a number that cannot enter the SQL; never a bare ValueError
+            raise QueryError("other", f"cannot build the plot query: {exc}") from exc
         _single_statement(con, sql)
         cap = _fetch_cap(spec, plan)
         result = execute_limited(con, sql, cap + 1, remaining())

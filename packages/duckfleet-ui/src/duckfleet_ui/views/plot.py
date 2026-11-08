@@ -19,7 +19,7 @@ import pandas as pd
 import streamlit as st
 from pydantic import ValidationError
 
-from duckfleet_core.plotdata import ROW_ORDER, PlotData, PlotSpec
+from duckfleet_core.plotdata import MAX_Y_COLUMNS, ROW_ORDER, PlotData, PlotSpec
 from duckfleet_core.profiler import is_numeric_type, is_temporal_type
 from duckfleet_core.query import QueryError
 from duckfleet_ui import catalog_access as access
@@ -34,7 +34,8 @@ THEMES = {"auto": "Automatic", "light": "Light", "dark": "Dark"}
 MIN_POINTS, MAX_POINTS, DEFAULT_POINTS = 100, 500_000, 50_000
 MIN_BINS, MAX_BINS, DEFAULT_BINS = 5, 500, 50
 MAX_SERIES_CAP = 8
-LOW_CARDINALITY = 50  # colour candidates: columns with at most this many distinct values
+# TUNING(plot-defaults): colour candidates are the columns with at most this many distinct values
+LOW_CARDINALITY = 50
 HINTS = {
     "read_only": "duckfleet opens databases read-only.",
     "blocked": "File access, extensions and settings are disabled here.",
@@ -72,6 +73,7 @@ def column_choices(columns: pd.DataFrame, kind: str) -> dict[str, list[str]]:
     distinct = dict(zip(names, columns["approx_distinct"].tolist(), strict=True))
 
     def few(name: str) -> bool:
+        # TUNING(plot-defaults)
         value = distinct.get(name)
         return value is not None and not pd.isna(value) and value <= LOW_CARDINALITY
 
@@ -83,6 +85,25 @@ def column_choices(columns: pd.DataFrame, kind: str) -> dict[str, list[str]]:
         "y": numeric,
         "color": [NONE, *by_cardinality],
     }
+
+
+def _histogram_summary(data: PlotData) -> str:
+    """Rows binned and bins drawn, counted from the plotted rows (W-14).
+
+    Rows are ``(y column, bin start, bin end, [series], count)``; empty bins are not drawn and
+    rows without a finite value are not binned, so neither number is the requested one.
+    """
+    scanned = data.rows_scanned
+    drawn = len({(r[0], r[1]) for r in data.rows})
+    columns = len({r[0] for r in data.rows})
+    bins = f"{drawn} equal-width bin{'' if drawn == 1 else 's'}"
+    if columns > 1:
+        return f"{scanned:,} rows in {bins} over {columns} columns"
+    binned = sum(int(r[-1]) for r in data.rows)
+    rows = f"{binned:,}" if binned == scanned else f"{binned:,} of {scanned:,}"
+    if drawn < data.spec.bins and drawn > 1:
+        bins += f" ({data.spec.bins} requested; empty bins are not drawn)"
+    return f"{rows} rows in {bins}"
 
 
 def describe(data: PlotData) -> str:
@@ -101,7 +122,7 @@ def describe(data: PlotData) -> str:
         text = f"reservoir sample of {shown:,} of {rows} rows"
     elif data.strategy == "histogram":
         text = (
-            f"{rows} rows in {data.spec.bins} equal-width bins "
+            f"{_histogram_summary(data)} "
             "(bins and series are bounded by their own limits, not by the point budget)"
         )
     else:
@@ -123,6 +144,7 @@ def csv_bytes(data: PlotData) -> bytes:
 
 def default_table(tables: pd.DataFrame, labels: list[str]) -> str:
     """The table shown first: one with a time window and rows (worth plotting), else the first."""
+    # TUNING(plot-defaults)
     for label, rows, start in zip(labels, tables["row_count"], tables["time_min"], strict=True):
         if not pd.isna(start) and not pd.isna(rows) and rows > 0:
             return label
@@ -187,6 +209,8 @@ def _form(
             choices["y"],
             key=f"plot_y|{base}",
             persist_state="session",
+            max_selections=MAX_Y_COLUMNS,
+            help=f"At most {MAX_Y_COLUMNS} columns: one colour each.",
         )
         right.selectbox(
             "Colour (series)",
@@ -334,6 +358,9 @@ def _show_data(data: PlotData, info: dict[str, Any], table_label: str) -> None:
 def _show_request(
     request: dict[str, Any], info: dict[str, Any], live: tuple[int, int] | None
 ) -> None:
+    if request.get("warning"):
+        st.warning(request["warning"])  # a problem with the choices, not a query error (W-15)
+        return
     if request.get("error"):
         _show_error(*request["error"])
         return
@@ -440,10 +467,15 @@ def render() -> None:
             spec = _spec(kind, schema, table, values)
             request = {"rel_path": rel_path, "table": chosen, "spec_json": spec.model_dump_json()}
         except (ValidationError, ValueError) as exc:
-            message = _message(exc)
-            request = {"rel_path": rel_path, "table": chosen, "error": ("sql", message)}
+            request = {"rel_path": rel_path, "table": chosen, "warning": _message(exc)}
+        request["kind"] = kind
         st.session_state["plot_request"] = request
 
     request = st.session_state.get("plot_request")
-    if request and request["rel_path"] == rel_path and request["table"] == chosen:
+    if (
+        request
+        and request["rel_path"] == rel_path
+        and request["table"] == chosen
+        and request.get("kind") == kind  # W-04: another kind shows nothing until Plot is pressed
+    ):
         _show_request(request, info, live)

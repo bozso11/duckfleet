@@ -39,6 +39,8 @@ def scanned(tmp_path_factory: pytest.TempPathFactory) -> tuple[Path, Path]:
         "CREATE TABLE events AS SELECT TIMESTAMP '2026-03-01 00:00:00' + to_minutes(i) AS ts, "
         "sin(i / 50.0) AS value, (i % 4) + 1 AS run_id, i * 1000.0 AS big FROM range(4000) r(i)"
     )
+    columns = ", ".join(f"i * {k} AS c{k}" for k in range(1, 11))
+    con.execute(f"CREATE TABLE wide AS SELECT {columns} FROM range(50) r(i)")  # ten numeric columns
     con.close()
     cache = base / "cache"
     run_scan(fleet, ScanConfig(workers=1, cache_dir=str(cache)))
@@ -503,3 +505,77 @@ def test_nothing_is_loaded_without_a_catalog(
     at = AppTest.from_file(APP, default_timeout=60).run()
     assert any("No fleet is loaded" in i.value for i in at.info)
     assert not at.button
+
+
+# ---------------------------------------------------------------- review fixes (0.3.1)
+
+
+def test_at_most_eight_y_columns_can_be_selected(pointed_at) -> None:
+    """W-03: the multiselect stops at eight (one colour each); the spec says the same."""
+    at = start(MULTI, "main.wide")
+    ok(at)
+    y = at.multiselect(key=f"plot_y|{base(MULTI, 'main.wide', 'line')}")
+    assert y.proto.max_selections == 8 and len(y.options) == 10
+    y.set_value([f"c{k}" for k in range(1, 9)])  # eight are fine
+    at = submit(at)
+    ok(at)
+    assert not at.warning and len(figure_of(at)["data"]) >= 8
+
+
+def test_switching_the_kind_hides_the_chart_of_the_previous_kind(pointed_at) -> None:
+    """W-04: the remembered request belongs to its kind until Plot is pressed again."""
+    at = submit(start())
+    assert at.get("plotly_chart")
+    at.radio(key="plot_kind").set_value("bar").run()
+    ok(at)
+    assert not at.get("plotly_chart") and "1,000 points" not in captions(at)
+    at.radio(key="plot_kind").set_value("line").run()
+    assert at.get("plotly_chart")  # the line request is still the remembered one
+    at.radio(key="plot_kind").set_value("histogram").run()
+    assert not at.get("plotly_chart")
+    at = submit(at)
+    assert len(figure_of(at)["data"]) == 1 and figure_of(at)["data"][0]["type"] == "bar"
+    at.radio(key="plot_kind").set_value("line").run()
+    assert not at.get("plotly_chart")  # now the histogram is the remembered request
+
+
+def test_a_problem_with_the_choices_is_a_warning_without_a_kind(pointed_at) -> None:
+    """W-15: no ``sql:`` in front of "choose at least one y column"."""
+    at = start()
+    at.multiselect(key=f"plot_y|{KEY}|line").set_value([])
+    at = submit(at)
+    assert not at.exception and not at.error
+    assert [w.value for w in at.warning] == ["choose at least one y column for a line chart"]
+    assert not at.get("plotly_chart")
+    at.run()  # the warning is remembered with the request
+    assert [w.value for w in at.warning] == ["choose at least one y column for a line chart"]
+
+
+@pytest.fixture(scope="module")
+def histogram_db(tmp_path_factory: pytest.TempPathFactory) -> Path:
+    path = tmp_path_factory.mktemp("histcaption") / "h.duckdb"
+    con = duckdb.connect(str(path))
+    con.execute(
+        "CREATE TABLE t AS SELECT 5.0 AS const, "
+        "CASE WHEN i % 10 = 0 THEN NULL ELSE i::DOUBLE END AS gappy, "
+        "CASE WHEN i < 2990 THEN 0.0 ELSE 100.0 END AS lumpy FROM range(3000) r(i)"
+    )
+    con.close()
+    return path
+
+
+def caption_of(path: Path, **fields) -> str:
+    spec = PlotSpec(schema_name="main", table_name="t", kind="histogram", **fields)
+    return plot_view.describe(fetch_plot_data(path, spec, QueryConfig()))
+
+
+def test_the_histogram_caption_counts_drawn_bins_and_binned_rows(histogram_db: Path) -> None:
+    """W-14: a constant column is one bin; NULLs are not binned; empty bins are not drawn."""
+    assert caption_of(histogram_db, y=["const"]).startswith("3,000 rows in 1 equal-width bin ")
+    assert caption_of(histogram_db, y=["gappy"], bins=20).startswith(
+        "2,700 of 3,000 rows in 20 equal-width bins "
+    )
+    lumpy = caption_of(histogram_db, y=["lumpy"], bins=20)
+    assert lumpy.startswith("3,000 rows in 2 equal-width bins (20 requested; empty bins")
+    two = caption_of(histogram_db, y=["const", "lumpy"], bins=20)
+    assert two.startswith("3,000 rows in 3 equal-width bins over 2 columns")

@@ -46,8 +46,12 @@ _SURFACE = {
 }
 _PANEL_HEIGHT = 300
 _SINGLE_HEIGHT = 440
-_WEBGL_FROM = 2_000  # scatter points from which Scattergl is used
-_MARKERS_UP_TO = 60  # a line with at most this many points also shows its markers
+# TUNING(chart-render): scatter points from which Scattergl is used, the largest line that
+# also shows its markers, and the point count above which scatter markers turn translucent
+_WEBGL_FROM = 2_000
+_MARKERS_UP_TO = 60
+_OPAQUE_UP_TO = 1_000
+_TRANSLUCENT = 0.7
 
 
 def _mode(mode: str) -> str:
@@ -268,8 +272,10 @@ def _line_traces(fig: go.Figure, data: PlotData, mode: str, layout: Layout) -> t
                 common = {"legendgroup": str(label), "showlegend": show, "name": str(label)}
                 if spec.kind == "scatter":
                     y = [_num(r[base]) for r in rows]
+                    # TUNING(chart-render)
                     trace_type = go.Scattergl if len(rows) >= _WEBGL_FROM else go.Scatter
-                    opacity = 0.7 if len(rows) > 1000 else 1.0  # overplotting shows as density
+                    # overplotting shows as density
+                    opacity = _TRANSLUCENT if len(rows) > _OPAQUE_UP_TO else 1.0
                     marker = {"size": 8, "color": color, "opacity": opacity}
                     trace = trace_type(x=x, y=y, mode="markers", marker=marker, **common)
                     _add(fig, trace, panel, panels)
@@ -308,6 +314,7 @@ def _line_traces(fig: go.Figure, data: PlotData, mode: str, layout: Layout) -> t
                     fig,
                     go.Scatter(
                         x=x, y=mean, line={"width": 2, "color": color},
+                        # TUNING(chart-render)
                         mode="lines+markers" if points <= _MARKERS_UP_TO else "lines",
                         marker={"size": 8, "color": color}, connectgaps=False, **common, **extra,
                     ),  # fmt: skip
@@ -334,6 +341,9 @@ def _histogram_traces(fig: go.Figure, data: PlotData, mode: str, layout: Layout)
     columns = list(spec.y)
     panels = len(columns) if layout == "panels" else 1
     names = list(data.series) if has_s else [None]
+    # series of the chart: the colour values, or the y columns when there is no colour column
+    # (a histogram of two columns has a legend like a line chart of two columns, W-13)
+    legend_series = len(names) if has_s else len(columns)
     for panel, column in enumerate(columns if panels > 1 else columns[:1], start=1):
         rows = [r for r in data.rows if r[0] == column]
         groups: dict[str | None, list[tuple]] = {n: [] for n in names}
@@ -343,7 +353,8 @@ def _histogram_traces(fig: go.Figure, data: PlotData, mode: str, layout: Layout)
             part = groups.get(series, [])
             if not part:
                 continue
-            color = series_color(series, index, mode)
+            color_index = index if has_s else columns.index(column)
+            color = series_color(series, color_index, mode)
             widths = [(r[2] - r[1]) * 0.9 for r in part]  # a 10 % gap between the bars
             fig.add_trace(
                 go.Bar(
@@ -352,8 +363,8 @@ def _histogram_traces(fig: go.Figure, data: PlotData, mode: str, layout: Layout)
                     width=widths,
                     marker={"color": color, "line": {"width": 0}},
                     name=str(series) if has_s else column,
-                    legendgroup=str(series),
-                    showlegend=has_s and len(names) >= 2 and panel == 1,
+                    legendgroup=str(series) if has_s else column,
+                    showlegend=legend_series >= 2 and (panel == 1 or not has_s),
                     customdata=[(r[1], r[2]) for r in part],
                     hovertemplate="%{customdata[0]:.4g} to %{customdata[1]:.4g}: %{y:,}",
                 ),
@@ -361,7 +372,7 @@ def _histogram_traces(fig: go.Figure, data: PlotData, mode: str, layout: Layout)
                 col=1 if panels > 1 else None,
             )
     fig.update_layout(barmode="stack")
-    return panels, len(names) if has_s else 1
+    return panels, legend_series
 
 
 def _bar_traces(fig: go.Figure, data: PlotData, mode: str, layout: Layout) -> tuple[int, int]:

@@ -137,13 +137,15 @@ def test_ladder_choice_for_a_span_and_a_budget() -> None:
     assert choose_bucket_seconds(34.7 * day, 1000, 1) == 3600  # 834 buckets
     assert choose_bucket_seconds(34.7 * day, 1000, 8) == 43200  # shared by 8 series: 71 each
     assert choose_bucket_seconds(10 * 365 * day, 100, 1) == 7776000  # 42 buckets of 90 days
-    assert choose_bucket_seconds(10_000 * 365 * day, 100, 1) == BUCKET_LADDER_SECONDS[-1]
-    # the buckets (plus the one a span can straddle) never exceed the budget when one fits
-    for span in (10, 700, 5000, 90_000, 3_000_000, 90_000_000):
+    # above the ladder the width is derived, in whole days (W-02; more in test_plotdata_fixes.py)
+    derived = choose_bucket_seconds(10_000 * 365 * day, 100, 1)
+    assert derived > BUCKET_LADDER_SECONDS[-1] and derived % day == 0
+    assert derived not in BUCKET_NAMES
+    # the buckets (plus the one a span can straddle) never exceed the budget
+    for span in (10, 700, 5000, 90_000, 3_000_000, 90_000_000, 9_000_000_000):
         for budget, series in ((100, 1), (500, 4), (2000, 9)):
             width = choose_bucket_seconds(span, budget, series)
-            if width != BUCKET_LADDER_SECONDS[-1]:
-                assert (math.ceil(span / width) + 1) * series <= budget
+            assert (math.ceil(span / width) + 1) * series <= budget
 
 
 def test_series_slots() -> None:
@@ -281,7 +283,7 @@ def test_line_row_order_x(pdb: Path) -> None:
 def test_date_and_timestamptz_x_are_cast_to_naive_timestamps(pdb: Path) -> None:
     by_date = fetch(pdb, spec("line", x="d", max_points=100))
     assert by_date.strategy == "time_bucket" and by_date.x_type == "TIMESTAMP"
-    assert "CAST(\"d\" AS TIMESTAMP)" in by_date.sql and len(by_date.rows) <= 100
+    assert 'TRY_CAST("d" AS TIMESTAMP)' in by_date.sql and len(by_date.rows) <= 100
     assert sum(r[4] for r in by_date.rows) == ROWS
     by_tz = fetch(pdb, spec("line", x="tz", max_points=1000))
     assert by_tz.strategy == "time_bucket" and by_tz.bucket == "1 hour"

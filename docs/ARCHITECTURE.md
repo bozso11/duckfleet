@@ -1,6 +1,6 @@
 # Architecture
 
-Last updated: 2026-11-08 (0.3.0). Section 5 holds the final catalog schema,
+Last updated: 2026-11-08 (0.3.1). Section 5 holds the final catalog schema,
 copied from `duckfleet_core/catalog.py` (`SCHEMA_SQL`).
 
 ## 1. Two packages, one boundary
@@ -58,9 +58,13 @@ the CLI, notebooks and tests.
     the row threshold) and the `TableSummary` models; `store.SummaryStore`
     caches them as JSON sidecars (D-020).
 14. **cli_query** (v0.2): the commands `sql`, `summarize`, `preview` (D-027).
-15. **tempdir** (0.2.1): the per-process DuckDB temp folder `<cache dir>/tmp/<pid>`
-    (created before connecting, removed at exit, stale folders swept by `run_scan`),
-    used by the query layer, the profiler and the catalog writer (D-034, D-035).
+15. **tempdir** (0.2.1, per file since 0.3.1): the DuckDB temp folders under
+    `<cache dir>/tmp/<pid>`, one leaf per file per process,
+    `<pid>/<sha1(absolute path)[:16]>` (`file_temp_dir`, `ensure_file_temp_dir`), used by the
+    query layer, the profiler and the catalog writer; two DuckDB instances in one process must
+    never share a folder (W-01, D-042). The `<pid>` folder is created before connecting and
+    removed at exit; stale folders are swept by `run_scan` and on a process's first connection
+    (D-034, D-035, D-043).
 16. **plotdata** (v0.3): `PlotSpec`, `plan_plot`, `build_sql`, `fetch_plot_data`; turns a spec
     into one bounded DuckDB query (time buckets, numeric buckets, bins, reservoir sample, top-N
     folding) on the sandboxed query connection and returns `PlotData` (D-033, D-036).
@@ -115,7 +119,7 @@ Plot page / CLI plot --PlotSpec--> plotdata.fetch_plot_data
 <user cache dir>                      platformdirs.user_cache_dir("duckfleet", appauthor=False)
                                       (D-015; Windows %LOCALAPPDATA%\duckfleet\Cache, Linux ~/.cache/duckfleet)
   recent_roots.json
-  tmp/<pid>/                          DuckDB spill files of one process (0.2.1), removed at exit
+  tmp/<pid>/<file hash>/              DuckDB spill files of one process, one folder per file (0.3.1), removed at exit
   roots/<root_key>/
     root.txt
     profiles/<file_key>.json
@@ -205,7 +209,9 @@ Rules:
 4. Queries (v0.2): inside the UI or CLI process every connection to a scanned
    file uses the same config dict, because DuckDB refuses a second
    connection to the same file with another config. Threads, memory and the
-   temp directory are resolved once per process and never page inputs. The
+   temp directory are resolved once per process and never page inputs; the
+   temp directory is the file's own leaf under the process folder, so the config of
+   one file is the same everywhere and two files never share a folder (W-01). The
    profiler's config is the same sandbox (read-only, external access off,
    configuration locked) except threads and memory, so an in-process scan
    next to an open query connection works when those two agree (P-05). The
@@ -222,7 +228,8 @@ launch.py         console script duckfleet-ui -> streamlit run app.py
 app.py            st.set_page_config, st.navigation(list(nav.PAGES.values()))
 nav.py            the st.Page objects: Overview, Database, Plot, SQL (views import it inside functions)
 common.py         environment, root and catalog resolution, keep_valid, the shared database
-                  selectbox
+                  selectbox, file_state (missing, changed or current against the scan; its live
+                  size and mtime key the preview and plot caches)
 views/plot.py     render(): table and chart kind, form (x, y, colour, filter, options, Plot),
                   chart, caption, Plotted data (table, CSV), SQL
 charts.py         palette, template, needs_panels, Plotly figures of PlotData, to_frame (no widgets)
@@ -230,7 +237,9 @@ views/overview.py render(): sidebar (recent-roots selectbox, root folder, worker
                   full rescan, sniff all, Scan and Load existing catalog buttons), metrics,
                   fleet table, families + matrix, table variants, diff, timeline, health, rejected
 views/database.py render(): database selectbox, header, tables, lazy tabs Columns, Summary,
-                  Preview, Open in SQL
+                  Preview, Open in SQL, and Plot this table (hands the table, its first
+                  temporal column and first numeric column to the Plot page through
+                  plot_prefill)
 views/sql.py      render(): schema expander, editor, form (Options + Run), Clear, result grid,
                   downloads, history
 scan_runner.py    subprocess (python -m duckfleet_core scan --progress json) + JSON-lines

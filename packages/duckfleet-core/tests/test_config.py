@@ -6,6 +6,7 @@ from pathlib import Path
 import platformdirs
 import pytest
 
+from duckfleet_core import config as config_module
 from duckfleet_core.config import MAX_POOL_WORKERS, ScanConfig, default_cache_dir
 
 
@@ -65,7 +66,9 @@ def test_memory_limit_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
 
 def test_cache_dir_resolution(tmp_path: Path) -> None:
     assert ScanConfig(cache_dir=str(tmp_path)).resolved_cache_dir() == tmp_path
-    assert ScanConfig().resolved_cache_dir() == default_cache_dir()
+    # the conftest points the module's lookup at the test's folder (W-09); the function itself
+    # still answers with the real per-user folder
+    assert ScanConfig().resolved_cache_dir() == config_module.default_cache_dir()
     assert default_cache_dir() == Path(platformdirs.user_cache_dir("duckfleet", appauthor=False))
 
 

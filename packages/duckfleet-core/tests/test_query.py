@@ -26,6 +26,7 @@ from duckfleet_core.query import (
     run_query,
     table_columns,
 )
+from duckfleet_core.tempdir import file_temp_dir
 
 CROSS_JOIN = "select sum(a.i * b.i) from range(200000) a(i), range(200000) b(i)"
 WEIRD_SCHEMA = 'we"ird é'
@@ -103,8 +104,12 @@ def test_threads_and_memory_resolution(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 def test_connection_config_is_the_sandbox(tmp_path: Path) -> None:
-    temp = tmp_path / "cache" / "tmp" / "7"
-    config = connection_config(QueryConfig(threads=2, memory_limit_mb=600, temp_dir=str(temp)))
+    root = tmp_path / "cache" / "tmp" / "7"
+    db = tmp_path / "some.duckdb"
+    config = connection_config(
+        QueryConfig(threads=2, memory_limit_mb=600, temp_dir=str(root)), db
+    )
+    temp = file_temp_dir(root, db)  # W-01: the leaf of this file under the process folder
     assert config == {
         "threads": 2,
         "memory_limit": "600MB",
@@ -130,10 +135,10 @@ def test_the_temp_directory_defaults_to_the_cache(
 
 
 def test_the_temp_directory_takes_effect(qdb: Path, tmp_path: Path) -> None:
-    temp = tmp_path / "cache" / "tmp" / "1"
-    with open_readonly(qdb, QueryConfig(temp_dir=str(temp))) as con:
+    root = tmp_path / "cache" / "tmp" / "1"
+    with open_readonly(qdb, QueryConfig(temp_dir=str(root))) as con:
         (setting,) = con.execute("select current_setting('temp_directory')").fetchone()
-    assert Path(setting) == temp
+    assert Path(setting) == file_temp_dir(root, qdb)
 
 
 def test_a_spilling_query_writes_nothing_beside_the_scanned_file(tmp_path: Path) -> None:
@@ -142,7 +147,8 @@ def test_a_spilling_query_writes_nothing_beside_the_scanned_file(tmp_path: Path)
     scanned.mkdir()
     db = scanned / "spill.duckdb"
     duckdb.connect(str(db)).close()
-    temp = tmp_path / "cache" / "tmp" / "99"
+    root = tmp_path / "cache" / "tmp" / "99"
+    temp = file_temp_dir(root, db)  # W-01: the spill files go into the file's own leaf
     beside: set[str] = set()
     in_temp: set[str] = set()
     stop = threading.Event()
@@ -159,7 +165,7 @@ def test_a_spilling_query_writes_nothing_beside_the_scanned_file(tmp_path: Path)
     watcher = threading.Thread(target=watch)
     watcher.start()
     try:
-        config = QueryConfig(memory_limit_mb=64, threads=2, temp_dir=str(temp), timeout_s=120)
+        config = QueryConfig(memory_limit_mb=64, threads=2, temp_dir=str(root), timeout_s=120)
         sql = "select count(*) from (select hash(i) h from range(30000000) t(i) order by h)"
         assert run_query(db, sql, config).rows == [(30_000_000,)]
     finally:
@@ -346,7 +352,7 @@ def test_ctrl_c_interrupts_the_query_instead_of_waiting_for_it(qdb: Path) -> Non
 @pytest.mark.parametrize(
     "echoed",
     ["read-only mode", "no such file", "configuration has been locked",
-     "disabled by configuration"],
+     "disabled by configuration", "interrupt error"],
 )
 def test_text_echoed_from_the_sql_cannot_set_the_kind(
     qdb: Path, cfg: QueryConfig, echoed: str
@@ -404,6 +410,9 @@ def test_classify_error() -> None:
          "timeout"),
         # V-06: the type decides before the wording
         (duckdb.ConversionException("Could not convert string 'read-only mode' to INT32"), "sql"),
+        # W-07: "interrupt error" counts for an InvalidInputException only
+        (duckdb.ConversionException("Could not convert string 'interrupt error' to INT32"), "sql"),
+        (duckdb.BinderException("Referenced column \"interrupt error\" not found"), "sql"),
         (duckdb.InvalidInputException(
             'Invalid Input Error: Cannot execute statement of type "INSERT" on database "a" '
             "which is attached in read-only mode!"), "read_only"),
@@ -609,3 +618,27 @@ def test_preview_times_out(qdb: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     with pytest.raises(QueryError) as caught:
         preview_table(qdb, "main", "t", QueryConfig(timeout_s=0.5))
     assert caught.value.kind == "timeout"
+
+
+def test_bare_configs_never_touch_the_real_user_cache(qdb: Path) -> None:
+    """W-09: the conftest points ``default_cache_dir`` at the run's folder; the real one stays."""
+    import platformdirs
+
+    real = Path(platformdirs.user_cache_dir("duckfleet", appauthor=False))
+    mine = real / "tmp" / str(os.getpid())
+
+    def snapshot() -> list[str]:
+        return sorted(str(p) for p in mine.rglob("*")) if mine.exists() else []
+
+    before = snapshot()
+    bare = QueryConfig()
+    assert real not in bare.resolved_temp_dir().parents
+    assert run_query(qdb, "select count(*) from t", bare).rows == [(10_000,)]
+    from duckfleet_core.plotdata import PlotSpec, fetch_plot_data
+
+    spec = PlotSpec(schema_name="main", table_name="t", kind="line", x="ts", y=["x"])
+    assert fetch_plot_data(qdb, spec, bare).rows
+    from duckfleet_core.config import ScanConfig
+
+    assert real not in ScanConfig().resolved_cache_dir().parents
+    assert snapshot() == before
