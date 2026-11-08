@@ -109,3 +109,16 @@ def test_generation_is_repeatable_and_seed_changes_values(tmp_path: Path) -> Non
     # regenerating into an existing folder overwrites instead of failing
     make_demo_fleet(tmp_path / "a", seed=0)
     assert query(tmp_path / "a" / rel, sql) == a
+
+
+def test_the_big_flag_adds_one_large_table_and_nothing_else(tmp_path: Path) -> None:
+    fleet = make_demo_fleet(tmp_path / "big", big=True)
+    found = {p.relative_to(fleet).as_posix() for p in fleet.rglob("*") if p.is_file()}
+    assert found == EXPECTED_FILES | {"exp_04/run_01/metrics.duckdb"}
+    path = fleet / "exp_04" / "run_01" / "metrics.duckdb"
+    ((rows, low, high),) = query(path, "select count(*), min(ts), max(ts) from events")
+    assert rows == 200_000
+    assert (high - low).days == 29  # 30 days, the last row one step before the end
+    assert query(path, "select count(*) from config") == [(3,)]
+    plain = make_demo_fleet(tmp_path / "plain")  # without the flag nothing changes
+    assert not (plain / "exp_04").exists()

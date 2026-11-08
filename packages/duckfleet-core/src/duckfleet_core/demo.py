@@ -22,6 +22,8 @@ import duckdb
 _START = "2026-01-05 00:00:00"  # fixed, so time windows do not depend on the seed
 _WEEK_US = 7 * 24 * 3600 * 1_000_000
 _ROWS = 1_000
+_BIG_ROWS = 200_000  # make_demo_fleet(big=True): one table that needs bucketing
+_BIG_SPAN_US = 30 * 24 * 3600 * 1_000_000
 _CONFIG_ROWS = [("learning_rate", "0.01"), ("batch_size", "32"), ("optimizer", "adam")]
 
 
@@ -40,11 +42,13 @@ def _write_run_db(
     value_type: str,
     with_quality: bool,
     with_notes: bool,
+    rows: int = _ROWS,
+    span_us: int = _WEEK_US,
 ) -> None:
     """One ``metrics.duckdb``: ``events`` over a 7-day window plus ``config``."""
     _remove_db(path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    step_us = _WEEK_US // _ROWS
+    step_us = span_us // rows
     offset_us = week_index * _WEEK_US
     con = duckdb.connect(str(path))
     try:
@@ -60,7 +64,7 @@ def _write_run_db(
                        + to_microseconds(CAST({offset_us} + i * {step_us} AS BIGINT)),
                    sin(i / 50.0 + {salt % 17}) + (hash(i + {salt}) % 1000) / 10000.0,
                    {run_id}{quality_sel}
-            FROM range({_ROWS}) AS t(i)
+            FROM range({rows}) AS t(i)
             """
         )
         con.execute("CREATE TABLE config (key VARCHAR, value VARCHAR)")
@@ -72,11 +76,13 @@ def _write_run_db(
         con.close()
 
 
-def make_demo_fleet(dir: Path, seed: int = 0) -> Path:
+def make_demo_fleet(dir: Path, seed: int = 0, big: bool = False) -> Path:
     """Create the demo fleet under ``dir`` and return ``dir``.
 
     ``seed`` changes the generated values; time windows and structures are
-    fixed. Existing demo files are overwritten.
+    fixed. Existing demo files are overwritten. ``big`` adds
+    ``exp_04/run_01/metrics.duckdb`` (200,000 ``events`` rows over 30 days, the
+    structure of exp_01); without it the fleet and its scan numbers are unchanged.
     """
     root = Path(dir)
     root.mkdir(parents=True, exist_ok=True)
@@ -100,6 +106,19 @@ def make_demo_fleet(dir: Path, seed: int = 0) -> Path:
                 with_notes=extended,
             )
             week_index += 1
+
+    if big:
+        _write_run_db(
+            root / "exp_04" / "run_01" / "metrics.duckdb",
+            week_index=week_index,
+            run_id=1,
+            salt=seed * 1000 + week_index,
+            value_type="DOUBLE",
+            with_quality=False,
+            with_notes=False,
+            rows=_BIG_ROWS,
+            span_us=_BIG_SPAN_US,
+        )
 
     # Legacy file: older window, different structure, ``.db`` extension.
     legacy = root / "legacy" / "old.db"

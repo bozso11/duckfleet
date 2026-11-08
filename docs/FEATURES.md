@@ -84,6 +84,7 @@ Last updated: 2026-11-08 (0.2.1; v0.3 not started).
 | F-CLI-01 | `duckfleet scan`, `report`, `make-demo`, `paths` | done v0.1 | | |
 | F-CLI-02 | Report export to Markdown or HTML file | open option | | |
 | F-CLI-03 | `duckfleet sql`, `summarize`, `preview` | done v0.2 | L-09, L-14 | table, CSV or JSON output; exit code 3 for a query error (D-027) |
+| F-CLI-04 | `duckfleet plot`: the reduced data of a chart as CSV or JSON | done v0.3 | L-11, L-18 to L-21 | same reduction as the Plot page; summary and `--show-sql` on stderr; no chart or HTML export (D-037) |
 | F-UI-01 | Streamlit Overview page | done v0.1 | | blocking scan behind a progress bar; metrics, fleet table, families + matrix, table variants, diff, timeline, health, rejected |
 | F-UI-02 | Database page | done v0.2 | | lazy tabs (D-028) |
 | F-UI-03 | Plot page | planned v0.3 | | |

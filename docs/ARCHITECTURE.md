@@ -41,7 +41,7 @@ the CLI, notebooks and tests.
    connections).
 8. **report**: text and Markdown summaries from the catalog.
 9. **cli**: `scan`, `report`, `make-demo`, `paths`, and (v0.2) `sql`,
-   `summarize`, `preview`.
+   `summarize`, `preview`, (v0.3) `plot`.
 10. **demo**: generator of a small fleet with known properties, used by
     tests and the acceptance checklist.
 11. **config / models**: `ScanConfig` (every option and its resolved
@@ -64,6 +64,7 @@ the CLI, notebooks and tests.
 16. **plotdata** (v0.3): `PlotSpec`, `plan_plot`, `build_sql`, `fetch_plot_data`; turns a spec
     into one bounded DuckDB query (time buckets, numeric buckets, bins, reservoir sample, top-N
     folding) on the sandboxed query connection and returns `PlotData` (D-033, D-036).
+17. **cli_plot** (v0.3): the command `plot` (D-037).
 
 ## 3. Data flow
 

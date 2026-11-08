@@ -23,6 +23,7 @@ uv run duckfleet report ./demo-fleet       # text summary of the fleet
 uv run duckfleet sql ./demo-fleet exp_01/run_01/metrics.duckdb "select count(*) from events"
 uv run duckfleet summarize ./demo-fleet exp_01/run_01/metrics.duckdb main.events
 uv run duckfleet preview ./demo-fleet exp_01/run_01/metrics.duckdb main.events --rows 5 --order-by ts --desc
+uv run duckfleet plot ./demo-fleet exp_01/run_01/metrics.duckdb main.events --kind line --x ts --y value --max-points 100
 uv run duckfleet-ui                        # Streamlit app
 ```
 
@@ -36,6 +37,12 @@ uv run duckfleet-ui                        # Streamlit app
    CSV and JSON are always UTF-8; the text table uses the console encoding,
    so set `PYTHONUTF8=1` on Windows to see every character in it.
    Summaries are cached next to the scan profiles until the file changes.
+   `plot` prints the data a chart would draw, reduced inside DuckDB to the
+   point budget (`--max-points`, default 50,000): time buckets with mean, min
+   and max for a temporal x, numeric buckets, histogram bins, a reservoir
+   sample for scatter, top-N folding for series and bar categories; a summary
+   line (strategy, bucket width, points) goes to stderr, `--show-sql` adds the
+   query. `make-demo --big` adds a table of 200,000 rows to try it on.
 3. `duckfleet-ui` opens the Overview page: enter a root folder in the
    sidebar, press **Scan** (the page waits behind a progress bar) or **Load
    existing catalog**. The **Database** page shows the tables of one database
@@ -55,7 +62,7 @@ uv run duckfleet-ui                        # Streamlit app
 1. `packages/duckfleet-core`: discovery, read-only profiling in a parallel
    worker pool, schema fingerprints and families, profile cache, catalog
    (a DuckDB file), read-only query layer and summaries, CLI (`scan`,
-   `report`, `make-demo`, `paths`, `sql`, `summarize`, `preview`). No UI
+   `report`, `make-demo`, `paths`, `sql`, `summarize`, `preview`, `plot`). No UI
    dependency.
 2. `packages/duckfleet-ui`: Streamlit app over the core: fleet overview
    (v0.1), database deep dive and SQL (v0.2), plots (v0.3), cross-database

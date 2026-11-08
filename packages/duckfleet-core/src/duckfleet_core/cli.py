@@ -1,8 +1,8 @@
-"""Command line interface: scan, report, make-demo, paths, sql, summarize, preview.
+"""Command line interface: scan, report, make-demo, paths, sql, summarize, preview, plot.
 
 Exit codes: 0 success (even when some files failed), 1 usage error, 2 fatal
 (root missing, catalog build failed, no catalog), 3 query error (``sql``,
-``summarize``, ``preview``). ``scan --progress json`` prints one JSON object per
+``summarize``, ``preview``, ``plot``). ``scan --progress json`` prints one JSON object per
 line on stdout and nothing else there; logs go to stderr.
 """
 
@@ -17,7 +17,7 @@ from pathlib import Path
 
 from pydantic import ValidationError
 
-from duckfleet_core import __version__, cli_query
+from duckfleet_core import __version__, cli_plot, cli_query
 from duckfleet_core.catalog import CatalogReader
 from duckfleet_core.config import ScanConfig
 from duckfleet_core.coordinator import run_scan
@@ -77,12 +77,18 @@ def _build_parser() -> argparse.ArgumentParser:
     demo = sub.add_parser("make-demo", help="generate a small demo fleet in DIR")
     demo.add_argument("dir")
     demo.add_argument("--seed", type=int, default=0)
+    demo.add_argument(
+        "--big",
+        action="store_true",
+        help="also write exp_04/run_01/metrics.duckdb: 200,000 events rows over 30 days",
+    )
 
     paths = sub.add_parser("paths", help="print the cache locations for ROOT")
     paths.add_argument("root")
     paths.add_argument("--cache-dir")
 
     cli_query.add_parsers(sub)
+    cli_plot.add_parser(sub)
     return parser
 
 
@@ -197,7 +203,7 @@ def _cmd_report(args: argparse.Namespace) -> int:
 
 
 def _cmd_make_demo(args: argparse.Namespace) -> int:
-    root = make_demo_fleet(Path(args.dir), seed=args.seed)
+    root = make_demo_fleet(Path(args.dir), seed=args.seed, big=args.big)
     print(f"Demo fleet written to {root.resolve()}")
     print(f"Next: duckfleet scan {args.dir}")
     return EXIT_OK
@@ -235,5 +241,6 @@ def main(argv: Sequence[str] | None = None) -> int:
         "sql": cli_query.cmd_sql,
         "summarize": cli_query.cmd_summarize,
         "preview": cli_query.cmd_preview,
+        "plot": cli_plot.cmd_plot,
     }
     return handlers[args.command](args)

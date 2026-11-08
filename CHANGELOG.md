@@ -10,6 +10,10 @@
    buckets (mean, min, max), numeric buckets, equal-width histogram bins,
    reservoir samples, top-N folding of series and bar categories; 140 tests on a
    200,000-row table. No page or command uses it yet (D-036).
+4. `duckfleet plot ROOT DATABASE SCHEMA.TABLE --kind line|scatter|histogram|bar`
+   prints the reduced chart data as CSV or JSON with a summary line (strategy,
+   bucket, points) and, with `--show-sql`, the query on stderr; `make-demo
+   --big` adds a 200,000-row table (D-037).
 
 ## 0.2.1 (2026-11-08)
 
