@@ -88,7 +88,7 @@ Last updated: 2026-11-08 (0.4.0).
 | F-CLI-05 | `duckfleet fleet-tables`, `fleet-sql` | done v0.4 | L-09, L-12, L-14 | `--databases`, `--family`, `--all` (default); attach failures on stderr; exit code 3 for a query error (D-046) |
 | F-UI-01 | Streamlit Overview page | done v0.1 | | blocking scan behind a progress bar; metrics, fleet table, families + matrix, table variants, identical content (0.4), diff, timeline, health, rejected |
 | F-UI-02 | Database page | done v0.2 | | lazy tabs (D-028) |
-| F-UI-03 | Plot page | done v0.3 | | **Plot this table** on the Database page hands the table over (D-038) |
+| F-UI-03 | Plot page | done v0.3 | | **Plot this table** on the Database page hands the table over (D-038); scope *several databases* since 0.4 (D-047) |
 | F-UI-04 | SQL page | done v0.2 | | D-029; scope *several databases* since 0.4 (D-047) |
 | F-UI-05 | Scope control (one database or several) on the SQL and Plot pages | done v0.4 | L-12 | multiselect of up to 50 readable databases, default the strict family of the selected database, a Family selectbox (D-047) |
 | F-DOC-01 | Feature matrix, limits, tuning, decisions, roadmap kept current | done v0.1 | | this file |

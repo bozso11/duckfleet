@@ -32,8 +32,10 @@ the first scan after the upgrade profiles all files again (the next one reuses t
 1. [x] CI green on Windows and Linux for the 0.3.1 commit `7f51bc7` (run 42462230265) and for
    every phase commit: phase 1 `b9753d9` (42463125448), phase 2 `cb96242` (42463850373), phase 3
    `9e11c77` (42464481443), phase 4 `5dbee4e` (42465180749; the first Ubuntu attempt died
-   downloading uv from GitHub with HTTP 504 before any test ran, the re-run of that job passed).
-   The run of the 0.4.0 commit is recorded in the commit after it.
+   downloading uv from GitHub with HTTP 504 before any test ran, the re-run of that job passed),
+   and phase 5, the 0.4.0 commit `33520db` (42465975959; Ubuntu green, the first Windows attempt
+   died on the same HTTP 504 download before any test, the re-run of that job passed: 798 tests).
+   This entry's own commit changes documentation only.
 2. [x] Phase 0: every item of `docs/REVIEW_v0.3.md` fixed with its test (entry 0.3.1; 75 tests).
 3. [x] On the demo fleet: `duckfleet fleet-tables ./demo-fleet --family F1` lists `main.config`
    and `main.events` with 3 members each; `fleet-sql ./demo-fleet "select database, count(*) n from
