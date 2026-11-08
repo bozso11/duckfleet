@@ -2,7 +2,7 @@
 
 ## Unreleased
 
-Nothing yet.
+1. `docs/REVIEW_v0.4.md`: review of 0.4.0 against the plan (accepted; 13 confirmed defects, four medium, to ship as 0.4.1). Decision D-049.
 
 ## 0.4.0 (2026-11-08)
 
