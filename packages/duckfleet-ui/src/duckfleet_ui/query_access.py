@@ -19,7 +19,8 @@ import pandas as pd
 import pyarrow as pa
 import streamlit as st
 
-from duckfleet_core.plotdata import PlotData, PlotSpec, fetch_plot_data
+from duckfleet_core.fleet import FleetSelection
+from duckfleet_core.plotdata import PlotData, PlotSpec, fetch_fleet_plot_data, fetch_plot_data
 from duckfleet_core.query import QueryConfig, QueryResult, preview_table
 from duckfleet_core.store import SummaryStore
 from duckfleet_core.summary import TableSummary
@@ -146,6 +147,26 @@ def plot_data(abs_path: str, size_bytes: int, mtime_ns: int, spec_json: str) -> 
     ``size_bytes`` and ``mtime_ns`` only key the cache. Raises ``QueryError`` (not cached).
     """
     return fetch_plot_data(abs_path, PlotSpec.model_validate_json(spec_json), query_config())
+
+
+@st.cache_data(show_spinner=False, max_entries=16)
+def fleet_plot_data(
+    rel_paths: tuple[str, ...],
+    abs_paths: tuple[str, ...],
+    stamps: tuple[tuple[int, int], ...],
+    spec_json: str,
+) -> PlotData:
+    """The reduced data of one plot over several databases (their union view).
+
+    ``stamps`` are the files' live ``(size, mtime_ns)`` and only key the cache. Raises
+    ``QueryError`` (not cached).
+    """
+    return fetch_fleet_plot_data(
+        FleetSelection(rel_paths=list(rel_paths)),
+        dict(zip(rel_paths, abs_paths, strict=True)),
+        PlotSpec.model_validate_json(spec_json),
+        query_config(),
+    )
 
 
 # ---------------------------------------------------------------- summaries

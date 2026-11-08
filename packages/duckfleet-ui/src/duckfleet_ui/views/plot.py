@@ -1,5 +1,9 @@
 """Plot page: a chart of one table of the fleet, reduced inside DuckDB to a point budget.
 
+In scope "several databases" (``scope.py``) the Table selectbox lists the union views of the
+chosen databases (``duckfleet_core.fleet``) and the series colour defaults to ``database``, so
+the files of the selection are told apart; the reduction still happens inside DuckDB.
+
 The chart kind sits above the form because the choices below it depend on it; the rest of
 the controls share one form, so **Plot** submits every value together. The request (not
 the data) is kept in the session state: a rerun caused by another widget or a download
@@ -10,7 +14,9 @@ running the query again. Colours and layout come from ``charts`` (decision D-032
 
 from __future__ import annotations
 
+import os
 import re
+from collections.abc import Callable
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -19,12 +25,14 @@ import pandas as pd
 import streamlit as st
 from pydantic import ValidationError
 
+from duckfleet_core.fleet import FleetSelection, UnionView, describe_fleet
 from duckfleet_core.plotdata import MAX_Y_COLUMNS, ROW_ORDER, PlotData, PlotSpec
 from duckfleet_core.profiler import is_numeric_type, is_temporal_type
 from duckfleet_core.query import QueryError
 from duckfleet_ui import catalog_access as access
 from duckfleet_ui import charts, common
 from duckfleet_ui import query_access as queries
+from duckfleet_ui import scope as scopes
 
 KINDS = ["line", "scatter", "histogram", "bar"]
 AGGS = ["mean", "sum", "min", "max", "count"]
@@ -106,8 +114,11 @@ def _histogram_summary(data: PlotData) -> str:
     return f"{rows} rows in {bins}"
 
 
-def describe(data: PlotData) -> str:
-    """What the chart shows and how the data was reduced, in words (the caption)."""
+def describe(data: PlotData, series_word: str = "series") -> str:
+    """What the chart shows and how the data was reduced, in words (the caption).
+
+    ``series_word`` names the colour values (``databases`` when the colour is the file).
+    """
     rows = f"{data.rows_scanned:,}"
     shown = len(data.rows)
     if data.strategy == "raw":
@@ -132,9 +143,16 @@ def describe(data: PlotData) -> str:
         text += " (categories are bounded by their own limit, not by the point budget)"
     if data.folded_series:
         real = [s for s in data.series if s not in ("(other)", "(null)")]
-        text += f"; {len(real)} of {len(real) + data.folded_series} series shown, "
+        text += f"; {len(real)} of {len(real) + data.folded_series} {series_word} shown, "
         text += f"{data.folded_series} folded into (other)"
     return text
+
+
+def fleet_caption(data: PlotData, n_databases: int, label_column: str) -> str:
+    """The caption of a plot over several databases: how many files, and any folded files."""
+    files = f"{n_databases:,} database{'' if n_databases == 1 else 's'}"
+    by_file = data.spec.color == label_column
+    return f"{files}  |  {describe(data, 'databases' if by_file else 'series')}"
 
 
 def csv_bytes(data: PlotData) -> bytes:
@@ -158,14 +176,14 @@ def _file_stem(rel_path: str, table: str) -> str:
 # ---------------------------------------------------------------- the form
 
 
-def _default_selection(kind: str, choices: dict[str, list[str]]) -> dict[str, Any]:
+def _default_selection(
+    kind: str, choices: dict[str, list[str]], default_color: str | None = None
+) -> dict[str, Any]:
     x_options, y_options = choices["x"], choices["y"]
-    return {
-        "x": x_options[0] if x_options else None,
-        "y": y_options[:1] if kind != "bar" else [],
-        "color": NONE,
-        "where": "",
-    }
+    x = x_options[0] if x_options else None
+    # a bar chart whose categories are the files needs no colour for them
+    color = default_color if default_color in choices["color"] and x != default_color else NONE
+    return {"x": x, "y": y_options[:1] if kind != "bar" else [], "color": color, "where": ""}
 
 
 def _drop_stale(base: str, choices: dict[str, list[str]]) -> None:
@@ -180,12 +198,16 @@ def _drop_stale(base: str, choices: dict[str, list[str]]) -> None:
 
 
 def _form(
-    kind: str, base: str, choices: dict[str, list[str]], available: bool
+    kind: str,
+    base: str,
+    choices: dict[str, list[str]],
+    available: bool,
+    default_color: str | None = None,
 ) -> tuple[bool, dict[str, Any]]:
     """The controls and the submit button; returns ``(submitted, values)``."""
     state = st.session_state
     _drop_stale(base, choices)
-    for field, value in _default_selection(kind, choices).items():
+    for field, value in _default_selection(kind, choices, default_color).items():
         state.setdefault(f"plot_{field}|{base}", value)
     state.setdefault("plot_max_points", DEFAULT_POINTS)
     state.setdefault("plot_bins", DEFAULT_BINS)
@@ -325,7 +347,10 @@ def _panel_note(data: PlotData, choice: str) -> str:
     return SCALE_NOTE
 
 
-def _show_data(data: PlotData, info: dict[str, Any], table_label: str) -> None:
+def _show_data(
+    data: PlotData, stem: str, table_label: str, fleet: tuple[int, str] | None = None
+) -> None:
+    """The chart and what belongs to it; ``fleet`` is ``(databases, label column)`` or ``None``."""
     if not data.rows:
         st.info("Nothing to plot: the table is empty or the filter matched no rows.")
         return
@@ -336,7 +361,8 @@ def _show_data(data: PlotData, info: dict[str, Any], table_label: str) -> None:
                     config={"displaylogo": False})  # fmt: skip
     if charts.effective_layout(data, layout) == "panels":
         st.caption(_panel_note(data, choice))
-    st.caption(f"{describe(data)}  |  {data.elapsed_s:.2f} s")
+    summary = fleet_caption(data, *fleet) if fleet else describe(data)
+    st.caption(f"{summary}  |  {data.elapsed_s:.2f} s")
     for note in data.notes:
         st.caption(note)
     with st.expander("Plotted data"):
@@ -346,7 +372,7 @@ def _show_data(data: PlotData, info: dict[str, Any], table_label: str) -> None:
         st.download_button(
             "Download CSV",
             data=csv_bytes(data),
-            file_name=f"{_file_stem(info['rel_path'], table_label)}_{data.spec.kind}_{stamp}.csv",
+            file_name=f"{_file_stem(stem, table_label)}_{data.spec.kind}_{stamp}.csv",
             mime="text/csv",
             key="plot_csv",
             on_click="ignore",
@@ -356,25 +382,29 @@ def _show_data(data: PlotData, info: dict[str, Any], table_label: str) -> None:
 
 
 def _show_request(
-    request: dict[str, Any], info: dict[str, Any], live: tuple[int, int] | None
+    request: dict[str, Any],
+    fetch: Callable[[str], PlotData] | None,
+    stem: str,
+    fleet: tuple[int, str] | None = None,
 ) -> None:
+    """Show the remembered request; ``fetch(spec_json)`` reads the data, ``None`` if it cannot."""
     if request.get("warning"):
         st.warning(request["warning"])  # a problem with the choices, not a query error (W-15)
         return
     if request.get("error"):
         _show_error(*request["error"])
         return
-    if live is None:
+    if fetch is None:
         st.warning("The file is missing since the last scan, so nothing can be plotted.")
         return
     try:
         with st.spinner("Plotting..."):
-            data = queries.plot_data(info["abs_path"], live[0], live[1], request["spec_json"])
+            data = fetch(request["spec_json"])
     except QueryError as error:
         request["error"] = (error.kind, error.message)  # not re-run by the next rerun
         _show_error(error.kind, error.message)
         return
-    _show_data(data, info, request["table"])
+    _show_data(data, stem, request["table"], fleet)
 
 
 # ---------------------------------------------------------------- page
@@ -395,26 +425,138 @@ def _apply_prefill(rel_path: str, table_label: str, choices_by_kind: dict[str, d
     st.session_state.pop("plot_prefill", None)
 
 
-def render() -> None:
-    """Render the Plot page."""
-    from duckfleet_ui import nav  # here, not at module level: nav imports this module
+def _chart_section(
+    *,
+    scope_key: str,
+    chosen: str,
+    schema: str,
+    table: str,
+    columns: pd.DataFrame,
+    available: bool,
+    fetch: Callable[[str], PlotData] | None,
+    stem: str,
+    prefill_rel_path: str | None = None,
+    default_color: str | None = None,
+    fleet: tuple[int, str] | None = None,
+) -> None:
+    """Chart kind, form, request and chart of one table; shared by both scopes.
 
-    cache = common.cache_dir()
-    common.init_state(cache)
-    st.title("Plot")
-
-    root = st.session_state.get("active_root")
-    key = access.catalog_key(common.catalog_path(cache, root)) if root else None
-    if key is None:
-        st.info("No fleet is loaded. Scan a root folder or load a catalog on the Overview page.")
-        st.page_link(nav.PAGES["overview"], label="Open the Overview")
+    ``scope_key`` is the rel_path (scope "one") or the key of the selection (scope "many"): the
+    widget keys and the remembered request carry it, so nothing refers to another table.
+    """
+    choices_by_kind = {kind: column_choices(columns, kind) for kind in KINDS}
+    if prefill_rel_path is not None:
+        _apply_prefill(prefill_rel_path, chosen, choices_by_kind)
+    kind = st.radio("Chart", KINDS, horizontal=True, key="plot_kind", persist_state="session")
+    choices = choices_by_kind[kind]
+    if kind != "bar" and not choices["y"]:
+        st.info("This table has no numeric column to plot. A bar chart can count its rows.")
         return
-    path, mtime = key
 
-    rel_path = common.pick_database(access.databases(path, mtime))
-    if rel_path is None:
-        st.info("The catalog holds no database.")
+    base = f"{scope_key}|{chosen}|{kind}"
+    submitted, values = _form(kind, base, choices, available, default_color)
+    if submitted:
+        try:
+            spec = _spec(kind, schema, table, values)
+            request = {"rel_path": scope_key, "table": chosen, "spec_json": spec.model_dump_json()}
+        except (ValidationError, ValueError) as exc:
+            request = {"rel_path": scope_key, "table": chosen, "warning": _message(exc)}
+        request["kind"] = kind
+        st.session_state["plot_request"] = request
+
+    request = st.session_state.get("plot_request")
+    if (
+        request
+        and request["rel_path"] == scope_key
+        and request["table"] == chosen
+        and request.get("kind") == kind  # W-04: another kind shows nothing until Plot is pressed
+    ):
+        _show_request(request, fetch, stem, fleet)
+
+
+def _stamp(abs_path: str) -> tuple[int, int]:
+    """The file's live ``(size, mtime_ns)`` (it keys the cache), ``(-1, -1)`` when it is gone."""
+    try:
+        stat = os.stat(abs_path)
+    except OSError:
+        return (-1, -1)
+    return (stat.st_size, stat.st_mtime_ns)
+
+
+def fleet_columns_frame(view: UnionView, distinct: dict[str, int]) -> pd.DataFrame:
+    """The columns of a union view for ``column_choices``: the label column has one value per file;
+    the others take the largest ``approx_distinct`` of the scan over the files (a lower bound)."""
+    rows = []
+    for name, data_type in view.columns:
+        count = len(view.members) if name == view.label_column else distinct.get(name)
+        rows.append({"column_name": name, "data_type": data_type, "approx_distinct": count})
+    return pd.DataFrame(rows, columns=["column_name", "data_type", "approx_distinct"])
+
+
+def default_view(views: list[UnionView]) -> str:
+    """The union view shown first: one with a temporal column (worth plotting), else the first."""
+    # TUNING(plot-defaults)
+    for view in views:
+        if any(is_temporal_type(data_type) for _name, data_type in view.columns):
+            return view.qualified
+    return views[0].qualified
+
+
+def _render_many(path: str, mtime: int, scope: scopes.Scope) -> None:
+    """The Plot page in scope "several databases": union views of the chosen databases."""
+    if not scope.rel_paths:
+        st.info("Choose at least one database.")
         return
+    everything = access.abs_paths(path, mtime)
+    paths = {rel: everything[rel] for rel in scope.rel_paths if rel in everything}
+    selection = FleetSelection(rel_paths=list(paths))
+    try:
+        summary = describe_fleet(selection, paths, queries.query_config())
+    except QueryError as error:
+        _show_error(error.kind, error.message)
+        return
+    warning = scopes.attach_warning([f.__dict__ for f in summary.failures])
+    if warning:
+        st.warning(warning)
+    if not summary.views:
+        st.info("The chosen databases hold no tables or views.")
+        return
+    labels = [view.qualified for view in summary.views]
+    common.keep_valid("selected_table", labels)
+    st.session_state.setdefault("selected_table", default_view(summary.views))
+    chosen = st.selectbox(
+        "Table", labels, key="selected_table", persist_state="session",
+        help="The union views of the chosen databases; each holds the rows of every database "
+        "that has the table, with a database column.",
+    )  # fmt: skip
+    view = summary.views[labels.index(chosen)]
+    distinct = access.fleet_distinct(path, mtime, tuple(paths), view.schema_name, view.table_name)
+    columns = fleet_columns_frame(view, distinct)
+    if view.casts:
+        st.caption(
+            "Shown as text because the types differ between the databases: " + ", ".join(view.casts)
+        )
+    stamps = tuple(_stamp(abs_path) for abs_path in paths.values())
+
+    def fetch(spec_json: str) -> PlotData:
+        return queries.fleet_plot_data(tuple(paths), tuple(paths.values()), stamps, spec_json)
+
+    _chart_section(
+        scope_key=scope.key,
+        chosen=chosen,
+        schema=view.schema_name,
+        table=view.table_name,
+        columns=columns,
+        available=True,
+        fetch=fetch,
+        stem="fleet",
+        default_color=view.label_column,
+        fleet=(len(summary.aliases), view.label_column),
+    )
+
+
+def _render_one(path: str, mtime: int, rel_path: str) -> None:
+    """The Plot page in scope "one database"."""
     info = access.database_info(path, mtime, rel_path)
     if not info:
         st.warning(f"{rel_path} is not in the catalog any more. Scan again.")
@@ -452,30 +594,46 @@ def render() -> None:
         st.info("The scan recorded no columns for this table.")
         return
 
-    choices_by_kind = {kind: column_choices(columns, kind) for kind in KINDS}
-    _apply_prefill(rel_path, chosen, choices_by_kind)
-    kind = st.radio("Chart", KINDS, horizontal=True, key="plot_kind", persist_state="session")
-    choices = choices_by_kind[kind]
-    if kind != "bar" and not choices["y"]:
-        st.info("This table has no numeric column to plot. A bar chart can count its rows.")
+    def fetch(spec_json: str) -> PlotData:
+        assert live is not None
+        return queries.plot_data(info["abs_path"], live[0], live[1], spec_json)
+
+    _chart_section(
+        scope_key=rel_path,
+        chosen=chosen,
+        schema=schema,
+        table=table,
+        columns=columns,
+        available=state != common.MISSING,
+        fetch=fetch if live is not None else None,
+        stem=rel_path,
+        prefill_rel_path=rel_path,
+    )
+
+
+def render() -> None:
+    """Render the Plot page."""
+    from duckfleet_ui import nav  # here, not at module level: nav imports this module
+
+    cache = common.cache_dir()
+    common.init_state(cache)
+    st.title("Plot")
+
+    root = st.session_state.get("active_root")
+    key = access.catalog_key(common.catalog_path(cache, root)) if root else None
+    if key is None:
+        st.info("No fleet is loaded. Scan a root folder or load a catalog on the Overview page.")
+        st.page_link(nav.PAGES["overview"], label="Open the Overview")
         return
+    path, mtime = key
 
-    base = f"{rel_path}|{chosen}|{kind}"
-    submitted, values = _form(kind, base, choices, available=state != common.MISSING)
-    if submitted:
-        try:
-            spec = _spec(kind, schema, table, values)
-            request = {"rel_path": rel_path, "table": chosen, "spec_json": spec.model_dump_json()}
-        except (ValidationError, ValueError) as exc:
-            request = {"rel_path": rel_path, "table": chosen, "warning": _message(exc)}
-        request["kind"] = kind
-        st.session_state["plot_request"] = request
-
-    request = st.session_state.get("plot_request")
-    if (
-        request
-        and request["rel_path"] == rel_path
-        and request["table"] == chosen
-        and request.get("kind") == kind  # W-04: another kind shows nothing until Plot is pressed
-    ):
-        _show_request(request, info, live)
+    dbs = access.databases(path, mtime)
+    rel_path = common.pick_database(dbs)
+    if rel_path is None:
+        st.info("The catalog holds no database.")
+        return
+    scope = scopes.scope_control(dbs, access.families(path, mtime, "strict"))
+    if scope.mode == "many":
+        _render_many(path, mtime, scope)
+    else:
+        _render_one(path, mtime, rel_path)

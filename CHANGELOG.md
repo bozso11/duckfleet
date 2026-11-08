@@ -5,6 +5,25 @@
 Work towards 0.4.0 (`docs/PLAN_v0.4.md`). The acceptance checklist is ticked in the
 0.4.0 entry.
 
+### Phase 4: UI scope
+
+CI: commit `9e11c77` (phase 3) was green on both OSes (run 42464481443).
+
+1. **Scope** (`duckfleet_ui/scope.py`): a radio *One database / Several databases* on the SQL and
+   Plot pages, shared through the session state (`scope_mode`, `scope_rel_paths`). In *several
+   databases* a multiselect (at most 50, status `ok` only) starts as the strict family of the
+   selected database, or that database alone; a **Family** selectbox fills it with a family; a
+   family above 50 is cut to the first 50 with a caption (L-12).
+2. **SQL page** in *several databases*: the Schema expander lists the union views with their
+   database counts and columns, and the aliases; the placeholder query is
+   `SELECT database, count(*) FROM events GROUP BY 1`; results and CSV/Parquet downloads work as
+   before (`fleet_*` file names); databases that cannot be attached show as a warning above the
+   result.
+3. **Plot page** in *several databases*: the Table selectbox lists the union views, the colour
+   defaults to `database` (a bar chart of the databases needs none), and the caption names the
+   number of databases and the databases folded into `(other)` beyond the series cap. **Plot this
+   table** on the Database page keeps scope *one database*.
+
 ### Phase 3: plots and CLI
 
 CI: commit `cb96242` (phase 2) was green on both OSes (run 42463850373).

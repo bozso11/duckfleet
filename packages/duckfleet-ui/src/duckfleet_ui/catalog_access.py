@@ -107,9 +107,7 @@ def columns_frame(
     for row in rows:
         denominator = sample_rows if row["sampled"] else row_count
         count = row["non_null_count"]
-        row["null_share"] = (
-            1 - count / denominator if count is not None and denominator else None
-        )
+        row["null_share"] = 1 - count / denominator if count is not None and denominator else None
     return _frame(rows, COLUMN_COLUMNS)
 
 
@@ -209,3 +207,33 @@ def rejected(catalog_path: str, catalog_mtime_ns: int) -> pd.DataFrame:
 @st.cache_data(show_spinner=False)
 def diff(catalog_path: str, catalog_mtime_ns: int, rel_path_a: str, rel_path_b: str) -> SchemaDiff:
     return CatalogReader(catalog_path).diff(rel_path_a, rel_path_b)
+
+
+@st.cache_data(show_spinner=False)
+def abs_paths(catalog_path: str, catalog_mtime_ns: int) -> dict[str, str]:
+    """``{rel_path: absolute path}`` of every database of the catalog (fleet connections)."""
+    return {row["rel_path"]: row["abs_path"] for row in CatalogReader(catalog_path).databases()}
+
+
+@st.cache_data(show_spinner=False)
+def fleet_distinct(
+    catalog_path: str,
+    catalog_mtime_ns: int,
+    rel_paths: tuple[str, ...],
+    schema_name: str,
+    table_name: str,
+) -> dict[str, int]:
+    """Largest ``approx_distinct`` of each column of a table over the chosen databases.
+
+    A lower bound of the distinct values in the union view; it only ranks the colour candidates
+    of the Plot page (columns with few distinct values first).
+    """
+    reader = CatalogReader(catalog_path)
+    found: dict[str, int] = {}
+    for rel_path in rel_paths:
+        for row in reader.columns(rel_path, schema_name, table_name):
+            if row["approx_distinct"] is not None:
+                found[row["column_name"]] = max(
+                    found.get(row["column_name"], 0), row["approx_distinct"]
+                )
+    return found

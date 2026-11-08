@@ -1,25 +1,39 @@
-"""SQL page: a read-only SQL editor on one database of the fleet.
+"""SQL page: a read-only SQL editor on one database of the fleet, or on several at once.
 
 The text runs as given on a sandboxed read-only connection (``query_access``,
 decision D-021): no writes, no file access, no extensions, no ``SET``; a row cap
-and a timeout apply. The last result and the prepared download live in the
+and a timeout apply. In scope "several databases" (``scope.py``) it runs on a fleet connection
+(``duckfleet_core.fleet``): one union view per table with a ``database`` column and the per-file
+aliases. The last result and the prepared download live in the
 session state so they survive reruns caused by other widgets.
 """
 
 from __future__ import annotations
 
 import re
+from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
 from typing import Any, Literal
 
+import pandas as pd
 import streamlit as st
 
+from duckfleet_core.fleet import (
+    FleetSelection,
+    FleetSummary,
+    describe_fleet,
+    export_fleet_query,
+    run_fleet_query,
+)
 from duckfleet_core.query import MissingDependencyError, QueryError, export_query, run_query
 from duckfleet_ui import catalog_access as access
 from duckfleet_ui import common
 from duckfleet_ui import query_access as queries
+from duckfleet_ui import scope as scopes
 
+PLACEHOLDER = "SELECT * FROM ..."
+PLACEHOLDER_MANY = "SELECT database, count(*) FROM events GROUP BY 1"
 HISTORY_SIZE = 20
 MIN_ROWS, MAX_ROWS = 1, 100_000
 MIN_TIMEOUT_S, MAX_TIMEOUT_S = 1, 3_600
@@ -72,14 +86,22 @@ def _options_config():
     )
 
 
-def _run(info: dict[str, Any], sql: str) -> None:
+def _run(scope: scopes.Scope, info: dict[str, Any], paths: dict[str, str], sql: str) -> None:
+    """Run ``sql`` on the database (``info``) or on the fleet of ``scope`` (``paths``)."""
     config = _options_config()
     _remember(sql)
     st.session_state.pop("download", None)
-    result: dict[str, Any] = {"rel_path": info["rel_path"], "sql": sql}
+    # "rel_path" is the key of what the result belongs to: the rel_path in scope "one"
+    result: dict[str, Any] = {"rel_path": scope.key, "sql": sql}
     try:
         with st.spinner("Running..."):
-            outcome = run_query(info["abs_path"], sql, config)
+            if scope.mode == "many":
+                outcome, summary = run_fleet_query(
+                    FleetSelection(rel_paths=scope.rel_paths), paths, sql, config
+                )
+                result["failures"] = [asdict(f) for f in summary.failures]
+            else:
+                outcome = run_query(info["abs_path"], sql, config)
     except QueryError as error:
         result["error"] = (error.kind, error.message)
     else:
@@ -96,12 +118,23 @@ def _run(info: dict[str, Any], sql: str) -> None:
     st.session_state["sql_result"] = result
 
 
-def _prepare(info: dict[str, Any], sql: str, fmt: Literal["csv", "parquet"]) -> None:
+def _prepare(
+    scope: scopes.Scope,
+    info: dict[str, Any],
+    paths: dict[str, str],
+    sql: str,
+    fmt: Literal["csv", "parquet"],
+) -> None:
     label, mime, extension = EXPORTS[fmt]
     config = _options_config()
     try:
         with st.spinner(f"Preparing {label}..."):
-            data, rows, truncated = export_query(info["abs_path"], sql, fmt, config)
+            if scope.mode == "many":
+                data, rows, truncated, _summary = export_fleet_query(
+                    FleetSelection(rel_paths=scope.rel_paths), paths, sql, fmt, config
+                )
+            else:
+                data, rows, truncated = export_query(info["abs_path"], sql, fmt, config)
     except MissingDependencyError as error:
         st.error(str(error))
         return
@@ -110,12 +143,13 @@ def _prepare(info: dict[str, Any], sql: str, fmt: Literal["csv", "parquet"]) -> 
         return
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     st.session_state["download"] = {
-        "name": f"{_file_stem(info['rel_path'])}_{stamp}.{extension}",
+        "name": f"{_file_stem(info['rel_path']) if scope.mode == 'one' else 'fleet'}"
+        f"_{stamp}.{extension}",
         "mime": mime,
         "data": data,
         "rows": rows,
         "truncated": truncated,
-        "rel_path": info["rel_path"],
+        "rel_path": scope.key,
         "sql": sql,
         "cap": config.max_download_rows,
     }
@@ -133,6 +167,9 @@ def _show_result(result: dict[str, Any]) -> None:
     if "error" in result:
         _show_error(*result["error"])
         return
+    warning = scopes.attach_warning(result.get("failures", []))
+    if warning:
+        st.warning(warning)
     frame = result["frame"]
     parts = [f"{result['elapsed_s']:.2f} s", f"{result['rows']:,} rows shown"]
     if result["statements"] > 1:
@@ -151,9 +188,9 @@ def _show_result(result: dict[str, Any]) -> None:
         st.caption("Shown as text: " + ", ".join(result["as_text"]))
 
 
-def _show_download(info: dict[str, Any], sql: str) -> None:
+def _show_download(scope: scopes.Scope, sql: str) -> None:
     download = st.session_state.get("download")
-    if not download or download["rel_path"] != info["rel_path"] or download["sql"] != sql:
+    if not download or download["rel_path"] != scope.key or download["sql"] != sql:
         return
     if download["truncated"]:
         st.warning(f"The export was cut at {download['cap']:,} rows.")
@@ -174,6 +211,55 @@ def _schema(path: str, mtime: int, rel_path: str) -> None:
             st.caption("No tables.")
         else:
             st.dataframe(schema, hide_index=True, width="stretch")
+
+
+def views_frame(summary: FleetSummary) -> pd.DataFrame:
+    """One row per union view: its members, columns and the columns shown as text."""
+    rows = [
+        {
+            "view": view.qualified,
+            "databases": len(view.members),
+            "columns": ", ".join(f"{name} {kind}" for name, kind in view.columns),
+            "as text": ", ".join(view.casts),
+        }
+        for view in summary.views
+    ]
+    return pd.DataFrame(rows, columns=["view", "databases", "columns", "as text"])
+
+
+def aliases_frame(summary: FleetSummary) -> pd.DataFrame:
+    return pd.DataFrame(
+        {"alias": list(summary.aliases), "database": list(summary.aliases.values())},
+        columns=["alias", "database"],
+    )
+
+
+def _schema_many(selection: FleetSelection, paths: dict[str, str]) -> None:
+    """The union views and aliases of the chosen databases (a fleet connection, opened here)."""
+    with st.expander("Schema"):
+        try:
+            summary = describe_fleet(selection, paths, _options_config())
+        except QueryError as error:
+            _show_error(error.kind, error.message)
+            return
+        st.markdown(
+            "**Union views**: each table name holds the rows of every chosen database that has it, "
+            "with a `database` column (the file's rel_path); a column a database lacks is NULL "
+            "there."
+        )
+        views = views_frame(summary)
+        if views.empty:
+            st.caption("No tables.")
+        else:
+            st.dataframe(views, hide_index=True, width="stretch")
+        st.markdown(
+            "**Aliases**: query one file as `alias.schema.table`, for example "
+            "`SELECT * FROM <alias>.main.events`."
+        )
+        st.dataframe(aliases_frame(summary), hide_index=True, width="stretch")
+        warning = scopes.attach_warning([asdict(f) for f in summary.failures])
+        if warning:
+            st.warning(warning)
 
 
 # ---------------------------------------------------------------- page
@@ -198,33 +284,46 @@ def render() -> None:
         return
     path, mtime = key
 
-    rel_path = common.pick_database(access.databases(path, mtime))
+    dbs = access.databases(path, mtime)
+    rel_path = common.pick_database(dbs)
     if rel_path is None:
         st.info("The catalog holds no database.")
         return
-    info = access.database_info(path, mtime, rel_path)
-    if not info:
-        st.warning(f"{rel_path} is not in the catalog any more. Scan again.")
-        return
+    scope = scopes.scope_control(dbs, access.families(path, mtime, "strict"))
     previous = st.session_state.get("sql_result")
-    if previous and previous["rel_path"] != rel_path:  # another database: the grid is stale
+    if previous and previous["rel_path"] != scope.key:  # another scope: the grid is stale
         st.session_state.pop("sql_result")
-    if info["status"] != "ok":
-        st.error(
-            f"This database could not be read in the last scan: {info['error_type']}: "
-            f"{info['error_message']}"
-        )
-        return
-    available = Path(info["abs_path"]).is_file()
-    if not available:
-        st.warning("The file is missing since the last scan. Rescan on the Overview page.")
-
-    _schema(path, mtime, rel_path)
+    info: dict[str, Any] = {}
+    paths: dict[str, str] = {}
+    if scope.mode == "many":
+        if not scope.rel_paths:
+            st.info("Choose at least one database.")
+            return
+        everything = access.abs_paths(path, mtime)
+        paths = {rel: everything[rel] for rel in scope.rel_paths if rel in everything}
+        selection = FleetSelection(rel_paths=list(paths))
+        available = True  # a file that vanished is reported as an attach failure
+        _schema_many(selection, paths)
+    else:
+        info = access.database_info(path, mtime, rel_path)
+        if not info:
+            st.warning(f"{rel_path} is not in the catalog any more. Scan again.")
+            return
+        if info["status"] != "ok":
+            st.error(
+                f"This database could not be read in the last scan: {info['error_type']}: "
+                f"{info['error_message']}"
+            )
+            return
+        available = Path(info["abs_path"]).is_file()
+        if not available:
+            st.warning("The file is missing since the last scan. Rescan on the Overview page.")
+        _schema(path, mtime, rel_path)
     st.text_area(
         "SQL",
         key="sql_text",
         height=220,
-        placeholder="SELECT * FROM ...",
+        placeholder=PLACEHOLDER_MANY if scope.mode == "many" else PLACEHOLDER,
         persist_state="session",
     )
     # The options and Run share a form, so Run submits the typed option values with the click
@@ -254,7 +353,7 @@ def render() -> None:
     sql = st.session_state.get("sql_text", "")
     if run:
         if sql.strip():
-            _run(info, sql)
+            _run(scope, info, paths, sql)
         else:
             st.warning("Type a query first.")
 
@@ -283,7 +382,7 @@ def render() -> None:
             can_export = available and bool(sql.strip()) and not differs
             csv_col, parquet_col, _ = st.columns([1, 1, 6])
             if csv_col.button("Prepare CSV", disabled=not can_export):
-                _prepare(info, sql, "csv")
+                _prepare(scope, info, paths, sql, "csv")
             if parquet_col.button("Prepare Parquet", disabled=not can_export):
-                _prepare(info, sql, "parquet")
-            _show_download(info, sql)
+                _prepare(scope, info, paths, sql, "parquet")
+            _show_download(scope, sql)

@@ -87,6 +87,7 @@ def _prepare_plot(prefill: dict[str, Any]) -> None:
     """Button callback (runs before the rerun, so widget state may still be set)."""
     st.session_state["selected_table"] = prefill["table"]
     st.session_state["plot_prefill"] = prefill
+    st.session_state["scope_mode"] = "one"  # the hand-off is about this database's table
 
 
 # ---------------------------------------------------------------- tabs
