@@ -61,6 +61,9 @@ the CLI, notebooks and tests.
 15. **tempdir** (0.2.1): the per-process DuckDB temp folder `<cache dir>/tmp/<pid>`
     (created before connecting, removed at exit, stale folders swept by `run_scan`),
     used by the query layer, the profiler and the catalog writer (D-034, D-035).
+16. **plotdata** (v0.3): `PlotSpec`, `plan_plot`, `build_sql`, `fetch_plot_data`; turns a spec
+    into one bounded DuckDB query (time buckets, numeric buckets, bins, reservoir sample, top-N
+    folding) on the sandboxed query connection and returns `PlotData` (D-033, D-036).
 
 ## 3. Data flow
 

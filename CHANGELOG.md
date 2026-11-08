@@ -5,6 +5,11 @@
 1. `docs/PLAN_v0.3.md`: detailed plan for 0.2.1 (Phase 0) and v0.3 (Plot
    page, `duckfleet plot`, chart rules).
 2. Decisions D-032 to D-034 and limits L-18 to L-21 added for v0.3.
+3. `duckfleet_core.plotdata` (v0.3 Phase 1): `PlotSpec`, `plan_plot`, `build_sql`
+   and `fetch_plot_data` reduce a table to a point budget inside DuckDB: time
+   buckets (mean, min, max), numeric buckets, equal-width histogram bins,
+   reservoir samples, top-N folding of series and bar categories; 140 tests on a
+   200,000-row table. No page or command uses it yet (D-036).
 
 ## 0.2.1 (2026-11-08)
 
