@@ -6,7 +6,7 @@ A folder tree holds up to a few hundred DuckDB files. Most share a table
 structure, some do not, and conventional database tools connect to one
 file at a time. The questions are, in order:
 
-1. **Fleet overview**: how many files, what they contain, which structures
+1. **Flock overview**: how many files, what they contain, which structures
    exist and how many files have each, and whether same-structure files
    hold different data, different time windows or different runs.
 2. **Deep dive**: for one chosen file, the tables, columns, a summary of
@@ -36,11 +36,11 @@ file at a time. The questions are, in order:
 3. Multi-user deployment, authentication, hosting.
 4. General SQL IDE features: autocomplete, ER diagrams, schema migration.
 5. Non-DuckDB databases such as Postgres or MySQL. SQLite, Parquet and CSV
-   as fleet members are open options, not scope.
+   as flock members are open options, not scope.
 
 ## Non-goals
 
-1. Being a general-purpose DuckDB GUI. The fleet view is the reason the
+1. Being a general-purpose DuckDB GUI. The flock view is the reason the
    tool exists; the single-file views serve it.
 2. Perfect heuristics. Time-window and run-identity detection are
    documented heuristics with tuning points, not guarantees.

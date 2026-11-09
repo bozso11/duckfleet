@@ -18,7 +18,7 @@ decided unless marked (TBC) or listed in Section 10. Facts marked
 
 ## 1. What v0.2 delivers
 
-1. **Database page** (Streamlit): pick one database of the scanned fleet;
+1. **Database page** (Streamlit): pick one database of the scanned flock;
    see its tables with row counts and time windows; per table the columns
    with the cheap stats from the scan, a full per-column summary (DuckDB
    `SUMMARIZE`, computed on demand and cached), and a paged, sortable data
@@ -26,26 +26,26 @@ decided unless marked (TBC) or listed in Section 10. Facts marked
 2. **SQL page**: a read-only, sandboxed SQL editor on one database with a
    result grid, a row cap, a timeout, CSV and Parquet download, and a
    per-session query history.
-3. **CLI**: `duckfleet sql`, `duckfleet summarize`, `duckfleet preview`.
+3. **CLI**: `duckflock sql`, `duckflock summarize`, `duckflock preview`.
 4. **0.1.1 fixes** from `docs/REVIEW_v0.1.md` (Phase 0).
 5. Everything works on Windows and Linux; CI runs the suite on both.
 
 ## 2. Repository layout after v0.2 (additions only)
 
 ```
-packages/duckfleet-core/src/duckfleet_core/
+packages/duckflock-core/src/duckflock_core/
   query.py            QueryConfig, open_readonly, run_query, export_query, preview_table, QueryError
   summary.py          TableSummary models, summarize_table
   store.py            + SummaryStore (JSON sidecars next to the profiles)
   cli.py              + sql, summarize, preview
-packages/duckfleet-core/tests/
+packages/duckflock-core/tests/
   test_query.py, test_summary.py, test_cli_v02.py   (unique basenames)
-packages/duckfleet-ui/src/duckfleet_ui/
+packages/duckflock-ui/src/duckflock_ui/
   nav.py              the st.Page objects, shared by app.py and the views
   query_access.py     cached wrappers for summaries and previews (not for ad-hoc SQL)
   views/database.py   render()
   views/sql.py        render()
-packages/duckfleet-ui/tests/
+packages/duckflock-ui/tests/
   _database_app.py, _sql_app.py, test_ui_database.py, test_ui_sql.py
 ```
 
@@ -234,7 +234,7 @@ Builds `SELECT <quoted columns or *> FROM "db"."schema"."table" [ORDER BY
 6. Fetching a `TIMESTAMP WITH TIME ZONE` value with `fetchone`/`fetchmany`
    needs `pytz` (`InvalidInputException: Required module 'pytz' failed to
    import`, verified); Arrow and pandas fetches do not. Decision D-022: add
-   `pytz>=2024.1` to `duckfleet-core` dependencies so rows fetch in the CLI
+   `pytz>=2024.1` to `duckflock-core` dependencies so rows fetch in the CLI
    and the grid. The profiler's SQL-side UTC conversion stays (LIMITS 13
    becomes historical).
 7. Streamlit 1.66: `st.switch_page(page: str | Path | Page)` and
@@ -256,10 +256,10 @@ Builds `SELECT <quoted columns or *> FROM "db"."schema"."table" [ORDER BY
 ### Phase 0: 0.1.1, the review fixes
 
 Implements every item of `docs/REVIEW_v0.1.md` Sections 2 to 4. In
-`packages/duckfleet-core`:
+`packages/duckflock-core`:
 
 1. R-01: catalog column `storage_version UBIGINT`; `read_header` returns
-   `None` for a value above `2**63 - 1`; demo fleet gains
+   `None` for a value above `2**63 - 1`; demo flock gains
    `broken/highbit.duckdb` (`bytes(8) + b"DUCK" + b"\xff" * 8 +
    bytes(4096)`, profiled as `corrupt`); update `docs/ARCHITECTURE.md`
    Section 5.
@@ -291,11 +291,11 @@ Implements every item of `docs/REVIEW_v0.1.md` Sections 2 to 4. In
 7. R-07: `build_catalog` connects with `threads=2, memory_limit="1GB",
    autoinstall/autoload False`.
 8. R-10: delete the vacuous assertion.
-9. R-11: demo fleet gains `secure/encrypted.duckdb` (Section 4 item 9);
+9. R-11: demo flock gains `secure/encrypted.duckdb` (Section 4 item 9);
    test asserts `error.type == "encrypted"`; correct `CHANGELOG.md` open
    item 1, D-018 and F-SCAN-09. Verify that no `.wal` sibling remains once
    the attaching connection is closed (checkpoint or delete it in
-   `make_demo_fleet` if one does), otherwise the walked-files count in
+   `make_demo_flock` if one does), otherwise the walked-files count in
    item 12 is off by one.
 10. P-01: `_can_reuse` also requires `existing.duckdb_version ==
     duckdb.__version__`; test.
@@ -305,15 +305,15 @@ Implements every item of `docs/REVIEW_v0.1.md` Sections 2 to 4. In
     generate 20 small files, run with 2 workers through a consumer loop
     that raises after the first saved profile, then assert that fewer
     profile JSON files than candidates exist in the store.
-12. Demo fleet after Phase 0: 16 files walked, 13 candidates, 2 rejected,
+12. Demo flock after Phase 0: 16 files walked, 13 candidates, 2 rejected,
     10 ok, 3 failed (`corrupt` x2, `encrypted`); family numbers unchanged.
     Update every test and document that states the old numbers.
 
-In `packages/duckfleet-ui`:
+In `packages/duckflock-ui`:
 
 13. R-04 sidebar value capped (follows from item 4).
 14. R-08: in `_timeline`, a bar with `time_max == time_min` is drawn with
-    `time_max + max(1 hour, 0.5 % of the fleet span)` and the hover text
+    `time_max + max(1 hour, 0.5 % of the flock span)` and the hover text
     says "single instant"; the caption lists such databases.
 15. R-09: `_scan` says "The scan ended without a finished event" when the
     exit code is 0 and no summary arrived, and appends `stray_stdout` to the
@@ -323,7 +323,7 @@ Documentation (R-12 to R-16, P-03, P-04): LIMITS L-02 gains the 61 cap;
 LIMITS 5 documents the click-during-scan behaviour; LIMITS 15 documents
 that profiles with table errors are reused until the file changes;
 ARCHITECTURE Sections 3, 4 and 7 corrected; FEATURES F-SCAN-10 wording;
-the UI package description becomes "Streamlit UI for duckfleet";
+the UI package description becomes "Streamlit UI for duckflock";
 CHANGELOG gets a 0.1.1 entry listing the fixes by review ID. Versions:
 0.1.1 in the three `pyproject.toml` files and both `__init__.py`.
 
@@ -358,7 +358,7 @@ Rules:
    Parquet via `pyarrow.parquet.write_table(table, buffer)`, CSV via
    `pyarrow.csv.write_csv(table, buffer)`. pyarrow is imported inside the
    function (it is a UI dependency; the CLI `--format csv` path needs it
-   too, so `duckfleet-core` declares `pyarrow` as an optional extra
+   too, so `duckflock-core` declares `pyarrow` as an optional extra
    `export` and the CLI prints a clear message when it is missing).
 4. Row values are returned as DuckDB gives them (datetime, Decimal, lists);
    the UI converts with pandas; the CLI table printer uses `str()`.
@@ -406,9 +406,9 @@ an error summary is recomputed next time.
 ### Phase 3: CLI
 
 ```
-duckfleet sql ROOT DATABASE SQL [--max-rows N] [--timeout S] [--format table|csv|json] [--cache-dir DIR]
-duckfleet summarize ROOT DATABASE SCHEMA.TABLE [--refresh] [--format table|json] [--cache-dir DIR]
-duckfleet preview ROOT DATABASE SCHEMA.TABLE [--rows N] [--offset N] [--order-by COL] [--desc]
+duckflock sql ROOT DATABASE SQL [--max-rows N] [--timeout S] [--format table|csv|json] [--cache-dir DIR]
+duckflock summarize ROOT DATABASE SCHEMA.TABLE [--refresh] [--format table|json] [--cache-dir DIR]
+duckflock preview ROOT DATABASE SCHEMA.TABLE [--rows N] [--offset N] [--order-by COL] [--desc]
                   [--columns a,b,c] [--format table|csv|json] [--cache-dir DIR]
 ```
 
@@ -423,7 +423,7 @@ duckfleet preview ROOT DATABASE SCHEMA.TABLE [--rows N] [--offset N] [--order-by
 4. `summarize --format table` prints the 12 columns; the second call says
    `(cached <computed_at>)` on stderr.
 
-Tests (`test_cli_v02.py`): the three commands on the demo fleet, the exit
+Tests (`test_cli_v02.py`): the three commands on the demo flock, the exit
 codes 2 and 3, `--format json`, the cached message.
 
 ### Phase 4: Database page (`views/database.py`, `nav.py`, `query_access.py`)
@@ -436,11 +436,11 @@ codes 2 and 3, `--format json`, the cached message.
 2. `query_access.py`: `@st.cache_data` wrappers keyed by `(abs_path,
    size_bytes, mtime_ns, ...)` for `table_summary` and `preview_page`;
    `run_query` is never cached. A `QueryConfig` is built once per process
-   from the environment (`DUCKFLEET_QUERY_THREADS`, `DUCKFLEET_QUERY_MEMORY_MB`
+   from the environment (`DUCKFLOCK_QUERY_THREADS`, `DUCKFLOCK_QUERY_MEMORY_MB`
    optional overrides) and shared by both pages (Section 3.2 item 5).
 3. `database.render()`:
    - resolve the root and catalog exactly as the Overview does (same
-     helpers, move them to `duckfleet_ui/common.py`); if no catalog: info
+     helpers, move them to `duckflock_ui/common.py`); if no catalog: info
      and a `st.page_link` to the Overview;
    - database selectbox over `databases` (status `ok` first, then errors),
      key `selected_rel_path` (shared with the Overview);
@@ -488,7 +488,7 @@ codes 2 and 3, `--format json`, the cached message.
    `memory_limit_mb` untouched); on success a caption (`elapsed`, rows
    shown, `truncated` warning, statements count when above 1) and
    `st.dataframe`; on `QueryError` an `st.error` with a kind-specific
-   hint: `read_only` "duckfleet opens databases read-only", `blocked`
+   hint: `read_only` "duckflock opens databases read-only", `blocked`
    "file access, extensions and settings are disabled on this page",
    `timeout` "raise the timeout in Options or narrow the query", `sql` the
    DuckDB message.
@@ -508,8 +508,8 @@ codes 2 and 3, `--format json`, the cached message.
 ### Phase 6: tests, docs, acceptance
 
 1. UI tests with `AppTest` on `_database_app.py` and `_sql_app.py`
-   (wrapper scripts calling `render()` with `DUCKFLEET_ROOT` and
-   `DUCKFLEET_CACHE_DIR` pointing at a scanned demo fleet): Database page
+   (wrapper scripts calling `render()` with `DUCKFLOCK_ROOT` and
+   `DUCKFLOCK_CACHE_DIR` pointing at a scanned demo flock): Database page
    renders the tables table, Columns tab, Summary compute, Preview page 2
    sorted descending; SQL page runs a query, shows a `read_only` error for
    an `INSERT`, a `blocked` error for `COPY`, and a truncated result with
@@ -543,7 +543,7 @@ codes 2 and 3, `--format json`, the cached message.
 ## 7. Windows and Linux
 
 Unchanged from v0.1 Section 7. The timeout uses a thread, not signals.
-The UI tests build the demo fleet in `tmp_path` and scan with `workers=1`.
+The UI tests build the demo flock in `tmp_path` and scan with `workers=1`.
 
 ## 8. Acceptance checklist (v0.2 done when all are ticked)
 
@@ -551,16 +551,16 @@ The UI tests build the demo fleet in `tmp_path` and scan with `workers=1`.
    phase commit.
 2. Phase 0: demo scan reports 16 walked, 13 candidates, 2 rejected, 10 ok,
    3 failed (`corrupt`, `corrupt`, `encrypted`); families unchanged; the
-   `infinity` test passes; `duckfleet scan` with an invalid tag pattern
+   `infinity` test passes; `duckflock scan` with an invalid tag pattern
    exits 1 with a message naming the pattern; the AppTest with 72 patched
    CPUs renders.
-3. `uv run duckfleet sql ./demo-fleet exp_01/run_01/metrics.duckdb "select
+3. `uv run duckflock sql ./demo-flock exp_01/run_01/metrics.duckdb "select
    count(*) from events"` prints 1000; an `INSERT` exits 3 with a
    `read_only` message; a `COPY ... TO` exits 3 with `blocked`.
-4. `uv run duckfleet summarize ./demo-fleet exp_01/run_01/metrics.duckdb
+4. `uv run duckflock summarize ./demo-flock exp_01/run_01/metrics.duckdb
    main.events` prints 3 column rows with min, max, avg and quantiles; the
    second call says cached; `--refresh` recomputes.
-5. `uv run duckfleet preview ... main.events --rows 5 --offset 5 --order-by
+5. `uv run duckflock preview ... main.events --rows 5 --offset 5 --order-by
    ts --desc` prints 5 rows in descending time order.
 6. UI on Windows and (through AppTest in CI) Linux: Database page for
    `exp_01/run_01/metrics.duckdb` shows 2 tables, the Columns tab, a

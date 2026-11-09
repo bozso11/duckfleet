@@ -22,7 +22,7 @@ ship as 0.2.1.
    and `windows-latest`.
 2. 345 tests pass and ruff is clean on Windows (Python 3.11.9, duckdb
    1.5.6, streamlit 1.66.1, pandas 3.1.1).
-3. Fresh demo fleet: 16 walked, 13 candidates, 2 rejected, 10 ok, 3 failed
+3. Fresh demo flock: 16 walked, 13 candidates, 2 rejected, 10 ok, 3 failed
    (2 corrupt, 1 encrypted); rescan reuses 10 and retries 3; `sql` returns
    the count, an `INSERT` and a `COPY TO` exit 3 as `read_only` and
    `blocked`; `summarize` computes then serves from cache; `preview` sorts
@@ -39,13 +39,13 @@ ship as 0.2.1.
 
 ## 2. Confirmed findings
 
-Severity: high = a rule violation or a failure a real fleet will hit;
+Severity: high = a rule violation or a failure a real flock will hit;
 medium = a wrong result or classification in a plausible situation; low =
 cosmetic, hygiene or documentation.
 
 | ID | Sev. | Where | Claim | Scenario | Fix |
 |---|---|---|---|---|---|
-| V-01 | high | `query.connection_config`, `profiler._profile` connect config | DuckDB's `temp_directory` defaults to `<database path>.tmp`, so a query or scan that spills under its memory limit writes a directory next to the scanned file; read-only and external-access-off do not stop it | `memory_limit_mb=64` and a wide `GROUP BY`: `spill.duckdb.tmp` appears beside the file during the query (reproduced); on a real fleet any `SUMMARIZE` or sort above the limit does this, fails on a read-only share, and litters after a crash | Add `"temp_directory": <cache_dir>/tmp` to `connection_config` and to the profiler's connect config (both accepted in the locked dict, verified); resolve it once per process; a test lists the folder during and after a spilling query |
+| V-01 | high | `query.connection_config`, `profiler._profile` connect config | DuckDB's `temp_directory` defaults to `<database path>.tmp`, so a query or scan that spills under its memory limit writes a directory next to the scanned file; read-only and external-access-off do not stop it | `memory_limit_mb=64` and a wide `GROUP BY`: `spill.duckdb.tmp` appears beside the file during the query (reproduced); on a real flock any `SUMMARIZE` or sort above the limit does this, fails on a read-only share, and litters after a crash | Add `"temp_directory": <cache_dir>/tmp` to `connection_config` and to the profiler's connect config (both accepted in the locked dict, verified); resolve it once per process; a test lists the folder during and after a spilling query |
 | V-02 | medium | `query._with_timeout`, `classify_error` | A timeout that lands while rows are being fetched is reported as `sql`, not `timeout` | Streaming result with VARCHAR or list columns, `timeout_s=0.3`: DuckDB raises `InvalidInputException: ... INTERRUPT Error: Interrupted!`, which the code does not treat as an interrupt (4 of 4 runs) | After `con.interrupt()`, turn every `duckdb.Error` raised by the worker into `QueryError("timeout")`; also match `interrupt` in `classify_error`; test with a VARCHAR result |
 | V-03 | medium | `cli.main` (`reconfigure(errors="replace")`), `cli_query.write_rows` | `--format csv` and `table` silently replace characters outside the console code page with `?` on Windows, and CSV lines end in `\r\n` | Without `PYTHONUTF8`, `select '日本語 é'` piped to a file gives `??? é` as cp1252 bytes (reproduced); the csv writer's `\n` becomes `\r\n` through text-mode stdout | For `csv` and `json` write UTF-8 bytes through `sys.stdout.buffer` with `newline=""` semantics; document `PYTHONUTF8=1` for `table`; test through a subprocess comparing bytes |
 | V-04 | medium | `query._with_timeout` | Ctrl-C in the CLI neither interrupts the query nor lets the timeout act: `KeyboardInterrupt` skips the timeout branch and `shutdown(wait=True)` waits for the whole query | A long query with `--timeout 8` and Ctrl-C at 1 s surfaced after 177 s | `except BaseException: con.interrupt(); raise` before the `finally` |

@@ -1,8 +1,8 @@
-# DuckDB Fleet Explorer: proposal (v0.2, answers folded in)
+# DuckDB Flock Explorer: proposal (v0.2, answers folded in)
 
 Status: accepted on 2026-11-04 with the answers in Section 0. The detailed
 plan for the first version is `docs/PLAN_v0.1.md`. Working name:
-**duckfleet**.
+**duckflock**.
 
 ## 0. Decisions taken on 2026-11-04
 
@@ -43,7 +43,7 @@ The owner accepted the defaults of the v0 proposal except where noted.
 
 A folder tree holds up to a few hundred DuckDB files. Most share a
 structure, some do not, and conventional database tools connect to one file
-at a time. The tool must answer three things in order: first a fleet
+at a time. The tool must answer three things in order: first a flock
 overview (how many files, what they contain, which structures exist and how
 many of each, whether same-structure files hold different data, time
 windows or runs); then a deep dive into one database (tables, columns,
@@ -107,11 +107,11 @@ heaviest to build and maintain).
 5. **Fingerprinting and clustering**: see Section 4.
 6. **Query layer**: read-only connections for the deep dive and SQL page
    (v0.2); `ATTACH ... (READ_ONLY)` for cross-database work (v0.4).
-7. **CLI**: `duckfleet scan`, `report`, `make-demo`, `paths`.
+7. **CLI**: `duckflock scan`, `report`, `make-demo`, `paths`.
 
 ### 3.2 Streamlit UI pages
 
-1. **Overview** (v0.1): pick a folder, run a scan, see the fleet table,
+1. **Overview** (v0.1): pick a folder, run a scan, see the flock table,
    schema families, family diff, table variants, time-window timeline,
    health and error list.
 2. **Database** (v0.2): deep dive into one selected file.
@@ -132,7 +132,7 @@ heaviest to build and maintain).
    and reads its progress events, which also keeps the process pool out of
    the Streamlit server process (the main Windows risk).
 
-## 4. How the fleet questions get answered
+## 4. How the flock questions get answered
 
 ### 4.1 Which structures exist and how many of each
 

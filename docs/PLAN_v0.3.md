@@ -23,7 +23,7 @@ decided unless marked (TBC) or listed in Section 10. Facts marked
 ## 1. What v0.3 delivers
 
 1. **Plot page** (Streamlit): pick a database and a table of the scanned
-   fleet; choose a chart kind (line, scatter, histogram, bar), an x column
+   flock; choose a chart kind (line, scatter, histogram, bar), an x column
    (temporal columns first, numeric next, or the row order), one or more y
    columns, an optional colour column (series), an optional SQL filter, and
    the point budget; DuckDB does the aggregation so the browser never
@@ -34,7 +34,7 @@ decided unless marked (TBC) or listed in Section 10. Facts marked
    the data is bucketed with `time_bucket` to a width chosen from the span
    and the budget, with mean, min and max per bucket and series; the mean
    is drawn as the line and min to max as a band.
-3. **CLI** `duckfleet plot`: the same reduction, written as CSV or JSON
+3. **CLI** `duckflock plot`: the same reduction, written as CSV or JSON
    (the chart itself is the page's job; an HTML export is an open option).
 4. **Database page** gets a **Plot this table** button.
 5. **0.2.1 fixes** from `docs/REVIEW_v0.2.md` (Phase 0).
@@ -43,15 +43,15 @@ decided unless marked (TBC) or listed in Section 10. Facts marked
 ## 2. Repository layout after v0.3 (additions only)
 
 ```
-packages/duckfleet-core/src/duckfleet_core/
+packages/duckflock-core/src/duckflock_core/
   plotdata.py          PlotSpec, PlotPlan, PlotData, plan_plot, fetch_plot_data
-  cli_plot.py          duckfleet plot
-packages/duckfleet-core/tests/
+  cli_plot.py          duckflock plot
+packages/duckflock-core/tests/
   test_plotdata.py, test_cli_plot.py
-packages/duckfleet-ui/src/duckfleet_ui/
+packages/duckflock-ui/src/duckflock_ui/
   charts.py            palette, theme detection, Plotly figure builders (no Streamlit widgets)
   views/plot.py        render()
-packages/duckfleet-ui/tests/
+packages/duckflock-ui/tests/
   _plot_app.py, test_ui_plot.py, test_charts.py
 ```
 
@@ -239,11 +239,11 @@ from the data-visualisation method the project follows.
 
 Implements every item of `docs/REVIEW_v0.2.md` Sections 2 to 4 and 6.
 
-Core (`packages/duckfleet-core`):
+Core (`packages/duckflock-core`):
 
 1. V-01: `connection_config` gains `"temp_directory": str(temp_dir)` where
    `temp_dir` is `QueryConfig.temp_dir` resolved once per process to
-   `<cache_dir>/tmp/<pid>` (`cache_dir` from `DUCKFLEET_CACHE_DIR` or
+   `<cache_dir>/tmp/<pid>` (`cache_dir` from `DUCKFLOCK_CACHE_DIR` or
    `default_cache_dir()`, or `--cache-dir` in the CLI). The profiler's
    connect config gains the same key from `ScanConfig.cache_dir` (always
    resolved by the coordinator) with its own `<pid>` folder per worker
@@ -291,7 +291,7 @@ Core (`packages/duckfleet-core`):
    (R-03), summaries of a nested-only table, a binary-only table and a view
    whose base table was dropped.
 
-UI (`packages/duckfleet-ui`):
+UI (`packages/duckflock-ui`):
 
 10. V-05: `_file_state` returns the live `stat`; `preview_page` is keyed by
     `st_size` and `st_mtime_ns` of the file now, not the catalog row; test:
@@ -370,7 +370,7 @@ more than the budget.
 ### Phase 2: CLI (`cli_plot.py`)
 
 ```
-duckfleet plot ROOT DATABASE SCHEMA.TABLE --kind line|scatter|histogram|bar
+duckflock plot ROOT DATABASE SCHEMA.TABLE --kind line|scatter|histogram|bar
                [--x COL] [--y COL[,COL...]] [--color COL] [--where EXPR]
                [--max-points N] [--bins N] [--agg mean|sum|min|max|count]
                [--format csv|json] [--show-sql] [--timeout S] [--cache-dir DIR]
@@ -384,7 +384,7 @@ duckfleet plot ROOT DATABASE SCHEMA.TABLE --kind line|scatter|histogram|bar
    and the chart code lives there. Listed in Section 9 as an open option.
 3. Exit codes as `sql`: 0, 1 usage (bad spec), 2 fatal, 3 query error.
 
-Tests: each kind on the demo fleet's `events` table, `--format json`,
+Tests: each kind on the demo flock's `events` table, `--format json`,
 `--show-sql`, exit codes.
 
 ### Phase 3: Plot page (`charts.py`, `views/plot.py`, Database button)
@@ -427,7 +427,7 @@ Tests: each kind on the demo fleet's `events` table, `--format json`,
 Tests (`test_charts.py`: figure trace counts, colours by series order,
 `(other)` grey, panels decision, band traces present for buckets, one
 y-axis only; `test_ui_plot.py` with `_plot_app.py` against a scanned demo
-fleet: submit a line plot of `events` with max points 100 (forces
+flock: submit a line plot of `events` with max points 100 (forces
 bucketing on 1,000 rows), assert the caption mentions a bucket and the
 figure has traces; histogram and bar submissions; a bad filter shows a
 `sql` error; the Database page button sets the prefill).
@@ -466,7 +466,7 @@ encoding="utf-8")`.
    timeout during a fetch is `timeout`; CSV output of `日本語 é` round-trips
    through a subprocess as UTF-8; the SQL page honours a timeout of 1 s set
    together with Run; the preview shows a row inserted after the scan.
-3. `uv run duckfleet plot ./demo-fleet exp_01/run_01/metrics.duckdb
+3. `uv run duckflock plot ./demo-flock exp_01/run_01/metrics.duckdb
    main.events --kind line --x ts --y value --max-points 100 --format csv`
    prints bucketed rows (fewer than 100) and the stderr summary names the
    bucket; `--show-sql` prints the query.
@@ -477,7 +477,7 @@ encoding="utf-8")`.
    table view and the CSV download work; a bad filter shows the `sql`
    message; **Plot this table** on the Database page lands on the Plot page
    with the table preselected.
-5. `make-demo --big` (a new flag; without it the demo fleet and its
+5. `make-demo --big` (a new flag; without it the demo flock and its
    numbers stay as they are) adds `exp_04/run_01/metrics.duckdb` with
    200,000 `events` rows over 30 days; a line plot of it with the default
    budget finishes under the timeout and the caption reports the bucket

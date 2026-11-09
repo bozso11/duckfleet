@@ -1,0 +1,124 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import duckdb
+import pytest
+
+from duckflock_core.demo import make_demo_flock
+
+EXPECTED_FILES = {
+    "exp_01/run_01/metrics.duckdb",
+    "exp_01/run_02/metrics.duckdb",
+    "exp_01/run_03/metrics.duckdb",
+    "exp_02/run_01/metrics.duckdb",
+    "exp_02/run_02/metrics.duckdb",
+    "exp_02/run_03/metrics.duckdb",
+    "exp_03/run_01/metrics.duckdb",
+    "exp_03/run_02/metrics.duckdb",
+    "legacy/old.db",
+    "legacy/sqlite_lookalike.db",
+    "empty/empty.duckdb",
+    "broken/corrupt.duckdb",
+    "broken/truncated.duckdb",
+    "broken/highbit.duckdb",
+    "secure/encrypted.duckdb",
+    "exp_01/run_01/metrics.duckdb.wal",
+}
+
+
+def query(path: Path, sql: str) -> list[tuple]:
+    con = duckdb.connect(str(path), read_only=True)
+    try:
+        return con.execute(sql).fetchall()
+    finally:
+        con.close()
+
+
+def test_demo_flock_has_exactly_the_planned_files(demo_flock: Path) -> None:
+    found = {p.relative_to(demo_flock).as_posix() for p in demo_flock.rglob("*") if p.is_file()}
+    assert found == EXPECTED_FILES
+
+
+def test_events_tables_and_windows_are_consecutive(demo_flock: Path) -> None:
+    runs = [f"exp_01/run_0{i}" for i in (1, 2, 3)]
+    runs += [f"exp_02/run_0{i}" for i in (1, 2, 3)] + [f"exp_03/run_0{i}" for i in (1, 2)]
+    windows = []
+    for run in runs:
+        path = demo_flock / run / "metrics.duckdb"
+        ((rows, low, high),) = query(path, "select count(*), min(ts), max(ts) from events")
+        assert rows == 1000
+        assert (high - low).days == 6  # 7-day window
+        windows.append((low, high))
+    assert windows == sorted(windows)
+    for (_, previous_high), (next_low, _) in zip(windows, windows[1:], strict=False):
+        assert 0 < (next_low - previous_high).total_seconds() < 3600 * 24
+
+
+def test_column_types_per_experiment(demo_flock: Path) -> None:
+    sql = "select column_name, data_type from duckdb_columns() where table_name='events'"
+    exp1 = dict(query(demo_flock / "exp_01" / "run_01" / "metrics.duckdb", sql))
+    exp2 = dict(query(demo_flock / "exp_02" / "run_01" / "metrics.duckdb", sql))
+    exp3 = dict(query(demo_flock / "exp_03" / "run_01" / "metrics.duckdb", sql))
+    assert exp1 == {"ts": "TIMESTAMP", "value": "DOUBLE", "run_id": "INTEGER"}
+    assert exp2 == {**exp1, "value": "FLOAT"}
+    assert exp3 == {**exp1, "quality": "SMALLINT"}
+    notes = query(demo_flock / "exp_03" / "run_02" / "metrics.duckdb", "select count(*) from notes")
+    assert notes == [(2,)]
+
+
+def test_config_table_identical_across_runs(demo_flock: Path) -> None:
+    sql = "select key, value from config order by key"
+    base = query(demo_flock / "exp_01" / "run_01" / "metrics.duckdb", sql)
+    assert len(base) == 3
+    for run in ("exp_01/run_02", "exp_02/run_03", "exp_03/run_02"):
+        assert query(demo_flock / run / "metrics.duckdb", sql) == base
+
+
+def test_legacy_empty_and_broken_files(demo_flock: Path) -> None:
+    assert query(demo_flock / "legacy" / "old.db", "select count(*) from samples") == [(100,)]
+    assert query(demo_flock / "empty" / "empty.duckdb", "select count(*) from duckdb_tables()") == [
+        (0,)
+    ]
+    assert (
+        (demo_flock / "legacy" / "sqlite_lookalike.db")
+        .read_bytes()
+        .startswith(b"SQLite format 3\x00")
+    )
+    assert (demo_flock / "broken" / "truncated.duckdb").stat().st_size == 100
+    corrupt = (demo_flock / "broken" / "corrupt.duckdb").read_bytes()
+    assert corrupt[8:12] == b"DUCK" and len(corrupt) == 4096 + 8192
+    highbit = (demo_flock / "broken" / "highbit.duckdb").read_bytes()
+    assert highbit == bytes(8) + b"DUCK" + b"\xff" * 8 + bytes(4096)
+    encrypted = demo_flock / "secure" / "encrypted.duckdb"
+    assert encrypted.read_bytes()[8:12] == b"DUCK"
+    with pytest.raises(duckdb.CatalogException, match="encrypted database"):
+        duckdb.connect(str(encrypted), read_only=True)
+    assert (demo_flock / "exp_01" / "run_01" / "metrics.duckdb.wal").stat().st_size == 0
+
+
+def test_generation_is_repeatable_and_seed_changes_values(tmp_path: Path) -> None:
+    sql = "select sum(value) from events"
+    make_demo_flock(tmp_path / "a", seed=0)
+    make_demo_flock(tmp_path / "b", seed=0)
+    make_demo_flock(tmp_path / "c", seed=5)
+    rel = "exp_01/run_01/metrics.duckdb"
+    a, b, c = (query(tmp_path / name / rel, sql) for name in "abc")
+    assert a == b
+    assert a != c
+    # regenerating into an existing folder overwrites instead of failing
+    make_demo_flock(tmp_path / "a", seed=0)
+    assert query(tmp_path / "a" / rel, sql) == a
+
+
+def test_the_big_flag_adds_one_large_table_and_nothing_else(tmp_path: Path) -> None:
+    flock = make_demo_flock(tmp_path / "big", big=True)
+    found = {p.relative_to(flock).as_posix() for p in flock.rglob("*") if p.is_file()}
+    assert found == EXPECTED_FILES | {"exp_04/run_01/metrics.duckdb"}
+    path = flock / "exp_04" / "run_01" / "metrics.duckdb"
+    ((rows, low, high),) = query(path, "select count(*), min(ts), max(ts) from events")
+    assert rows == 200_000
+    assert (high - low).days == 29  # 30 days, the last row one step before the end
+    assert query(path, "select count(*) from config") == [(3,)]
+    plain = make_demo_flock(tmp_path / "plain")  # without the flag nothing changes
+    assert not (plain / "exp_04").exists()

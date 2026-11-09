@@ -1,4 +1,4 @@
-# Implementation plan v0.1: scan + fleet overview
+# Implementation plan v0.1: scan + flock overview
 
 Status: implemented as 0.1.0 on 2026-11-04 (deviations and results: `CHANGELOG.md`
 0.1.0, `docs/DECISIONS.md` D-015 to D-018). Written for Sonnet 5.5 or any
@@ -17,18 +17,18 @@ Python 3.11.9, Windows 11; Linux-specific facts are marked (verify on Linux).
 
 ## 1. What v0.1 delivers
 
-1. `duckfleet scan <root>`: finds every DuckDB file under `<root>`, profiles
+1. `duckflock scan <root>`: finds every DuckDB file under `<root>`, profiles
    each one read-only in a parallel worker pool, stores one JSON profile per
    file in the user cache, and builds a DuckDB catalog from those profiles.
    Rescans reuse profiles of unchanged files.
-2. `duckfleet report <root>`: text summary of the fleet from the catalog
+2. `duckflock report <root>`: text summary of the flock from the catalog
    (counts, schema families, table variants, time windows, health, errors).
-3. `duckfleet make-demo <dir>`: generates a small demo fleet with two schema
+3. `duckflock make-demo <dir>`: generates a small demo flock with two schema
    families, different time windows, a legacy file, an empty database, a
    corrupt file, an SQLite look-alike and a stale WAL sibling. Tests and the
    acceptance checklist use it.
-4. `duckfleet-ui`: a Streamlit app with one page, **Overview**: choose a root
-   folder, run a scan (page blocks behind a progress bar), then see the fleet
+4. `duckflock-ui`: a Streamlit app with one page, **Overview**: choose a root
+   folder, run a scan (page blocks behind a progress bar), then see the flock
    table, schema families, family diff, table variants, time-window timeline
    and health list.
 5. Everything works on Windows and Linux; CI runs the test suite on both.
@@ -36,13 +36,13 @@ Python 3.11.9, Windows 11; Linux-specific facts are marked (verify on Linux).
 ## 2. Repository layout after v0.1
 
 ```
-duckfleet/
+duckflock/
   pyproject.toml                    uv workspace root (virtual), dev deps, ruff, pytest
-  packages/duckfleet-core/
+  packages/duckflock-core/
     pyproject.toml                  duckdb, pydantic, platformdirs, psutil
-    src/duckfleet_core/
+    src/duckflock_core/
       __init__.py                   __version__
-      __main__.py                   python -m duckfleet_core -> cli.main()
+      __main__.py                   python -m duckflock_core -> cli.main()
       cli.py                        argparse: scan, report, make-demo, paths
       config.py                     ScanConfig + resolved defaults
       models.py                     pydantic models: DatabaseProfile and parts, ScanSummary
@@ -54,9 +54,9 @@ duckfleet/
       coordinator.py                run_scan(): discovery -> pool -> store -> catalog
       catalog.py                    build_catalog() and CatalogReader
       report.py                     text/markdown report from CatalogReader
-      demo.py                       make_demo_fleet()
+      demo.py                       make_demo_flock()
     tests/
-      conftest.py                   demo fleet fixture (uses demo.py), tmp cache dir
+      conftest.py                   demo flock fixture (uses demo.py), tmp cache dir
       test_discovery.py
       test_profiler.py
       test_fingerprint.py
@@ -66,11 +66,11 @@ duckfleet/
       test_catalog.py
       test_cli.py
       test_core_smoke.py            keep: asserts core never imports streamlit
-  packages/duckfleet-ui/
-    pyproject.toml                  duckfleet-core, streamlit, plotly, pandas, pyarrow
-    src/duckfleet_ui/
+  packages/duckflock-ui/
+    pyproject.toml                  duckflock-core, streamlit, plotly, pandas, pyarrow
+    src/duckflock_ui/
       __init__.py
-      launch.py                     console script duckfleet-ui -> streamlit run app.py
+      launch.py                     console script duckflock-ui -> streamlit run app.py
       app.py                        st.set_page_config + st.navigation([Overview])
       scan_runner.py                runs the scan as a subprocess, parses JSON-lines progress
       catalog_access.py             st.cache_data wrappers around CatalogReader (DataFrames)
@@ -94,7 +94,7 @@ Pydantic model. Field, default, meaning:
 |---|---|---|
 | `extensions` | `[".duckdb", ".db", ".ddb"]` | lower-case, with dot; candidates by extension |
 | `sniff_all_files` | `False` | also header-sniff files with other extensions |
-| `exclude_dirs` | `[".git", ".venv", "__pycache__", "node_modules", ".duckfleet"]` | directory names skipped at any depth |
+| `exclude_dirs` | `[".git", ".venv", "__pycache__", "node_modules", ".duckflock"]` | directory names skipped at any depth |
 | `follow_symlinks` | `False` | never follow symlinked directories by default |
 | `max_files` | `1000` | stop walking after this many candidates; `truncated=True` |
 | `workers` | `None` | `None` resolves to `max(1, os.cpu_count() - 2)` |
@@ -106,7 +106,7 @@ Pydantic model. Field, default, meaning:
 | `count_view_rows` | `False` | views get `row_count=None` unless true |
 | `tag_patterns` | `tags.DEFAULT_TAG_PATTERNS` | regexes with named groups, see 5.3 |
 | `full` | `False` | ignore cached profiles, re-profile everything |
-| `cache_dir` | `None` | `None` resolves to `platformdirs.user_cache_dir("duckfleet")` |
+| `cache_dir` | `None` | `None` resolves to `platformdirs.user_cache_dir("duckflock")` |
 
 Provide `resolved_workers()`, `resolved_memory_limit_mb()`,
 `resolved_cache_dir()`. Workers receive `config.model_dump(mode="json")`
@@ -183,7 +183,7 @@ class DatabaseProfile(BaseModel):
 ```
 
 `ScanSummary` (also in `models.py`): `run_id`, `root`, `started_at`,
-`finished_at`, `duckfleet_version`, `duckdb_version`, `workers`,
+`finished_at`, `duckflock_version`, `duckdb_version`, `workers`,
 `files_walked`, `files_candidates`, `files_rejected`, `files_profiled`,
 `files_reused`, `files_failed`, `truncated`, `catalog_path`,
 `rejected: list[RejectedFile]` (`rel_path`, `reason`), `config: ScanConfig`.
@@ -222,7 +222,7 @@ Tables (column types in DuckDB terms):
 
 ```
 scan_runs(run_id VARCHAR, root VARCHAR, started_at TIMESTAMP, finished_at TIMESTAMP,
-          duckfleet_version VARCHAR, duckdb_version VARCHAR, workers INTEGER,
+          duckflock_version VARCHAR, duckdb_version VARCHAR, workers INTEGER,
           files_walked INTEGER, files_candidates INTEGER, files_rejected INTEGER,
           files_profiled INTEGER, files_reused INTEGER, files_failed INTEGER,
           truncated BOOLEAN, config_json VARCHAR)
@@ -274,7 +274,7 @@ family_strict, time_min, time_max where both non-null), `health()`,
 
 ### 3.5 Progress events (JSON lines on stdout)
 
-`duckfleet scan --progress json` prints one JSON object per line, nothing
+`duckflock scan --progress json` prints one JSON object per line, nothing
 else on stdout; logs go to stderr. The UI parses these.
 
 ```
@@ -545,7 +545,7 @@ class CatalogReader: ...   # Section 3.4
 6. `build_catalog` from `load_all()`, emit `catalog`.
 7. `save_summary`, `remember_root`, emit `finished`, return the summary.
 
-Tests: full run on the demo fleet with `workers=1` and `workers=2`
+Tests: full run on the demo flock with `workers=1` and `workers=2`
 (assert identical catalogs apart from timings); second run reuses every
 profile (`files_reused == files_candidates`, and runs in a fraction of the
 time); `full=True` reuses none; deleting a file prunes its profile; catalog
@@ -555,11 +555,11 @@ returns the expected members; `os.replace` after a previous catalog exists.
 ### Phase 5: CLI and demo (`cli.py`, `__main__.py`, `report.py`, `demo.py`)
 
 ```
-duckfleet scan ROOT [--workers N] [--max-files N] [--full] [--cache-dir DIR]
+duckflock scan ROOT [--workers N] [--max-files N] [--full] [--cache-dir DIR]
                     [--extensions .duckdb,.db,.ddb] [--sniff-all] [--progress text|json|none]
-duckfleet report ROOT [--format text|md] [--cache-dir DIR]
-duckfleet make-demo DIR [--seed N]
-duckfleet paths ROOT [--cache-dir DIR]          prints root_dir and catalog path
+duckflock report ROOT [--format text|md] [--cache-dir DIR]
+duckflock make-demo DIR [--seed N]
+duckflock paths ROOT [--cache-dir DIR]          prints root_dir and catalog path
 ```
 
 1. argparse only. Exit codes: 0 success (even if some files failed), 1
@@ -571,7 +571,7 @@ duckfleet paths ROOT [--cache-dir DIR]          prints root_dir and catalog path
    table lists, loose families, table variants, time windows (one line per
    database, sorted by `time_min`), health flags, errors with type and
    message, rejected files with reason.
-4. `make_demo_fleet(dir, seed=0)` creates exactly:
+4. `make_demo_flock(dir, seed=0)` creates exactly:
    - `exp_01/run_01..03/metrics.duckdb`: `events(ts TIMESTAMP, value DOUBLE,
      run_id INTEGER)` with 1,000 rows over a 7-day window per run, windows
      consecutive across runs; `config(key VARCHAR, value VARCHAR)` identical
@@ -596,15 +596,15 @@ duckfleet paths ROOT [--cache-dir DIR]          prints root_dir and catalog path
    Tests assert family sizes and memberships, never a label-to-experiment
    mapping.
 
-### Phase 6: UI overview (`duckfleet_ui`)
+### Phase 6: UI overview (`duckflock_ui`)
 
 1. `launch.py`: `main()` sets `sys.argv = ["streamlit", "run", <app.py path>,
    *extra_args]` and calls `streamlit.web.cli.main()`.
-2. `app.py`: `st.set_page_config(page_title="duckfleet", layout="wide")`,
+2. `app.py`: `st.set_page_config(page_title="duckflock", layout="wide")`,
    `st.navigation([st.Page(overview.render, title="Overview", default=True)])`
    then `.run()`. Views live in `views/`, never `pages/`.
 3. `scan_runner.py`: `run_scan_subprocess(root, options, on_event)` runs
-   `[sys.executable, "-m", "duckfleet_core", "scan", root, "--progress",
+   `[sys.executable, "-m", "duckflock_core", "scan", root, "--progress",
    "json", ...]` with `env={**os.environ, "PYTHONUTF8": "1",
    "PYTHONIOENCODING": "utf-8"}`, reads stdout line by line, parses each
    JSON object and calls `on_event`; collects stderr and shows it in an
@@ -619,13 +619,13 @@ duckfleet paths ROOT [--cache-dir DIR]          prints root_dir and catalog path
      (default resolved value), max files, checkboxes `full rescan`,
      `sniff all files`; buttons **Scan** and **Load existing catalog**;
      the initial root and the cache directory default from the
-     environment variables `DUCKFLEET_ROOT` and `DUCKFLEET_CACHE_DIR` when
+     environment variables `DUCKFLOCK_ROOT` and `DUCKFLOCK_CACHE_DIR` when
      set (the smoke test relies on this);
    - scan: `with st.status("Scanning...")` and `st.progress`, updated from
      events; the page blocks until `finished`, then `st.rerun()`;
    - metrics row: candidates, ok, failed, rejected, strict families, loose
-     families, total rows, fleet time span;
-   - fleet table (`st.dataframe`): rel_path, size, n_tables, total_rows,
+     families, total rows, flock time span;
+   - flock table (`st.dataframe`): rel_path, size, n_tables, total_rows,
      family_strict, family_loose, time_min, time_max, tags, status;
      a selectbox sets `st.session_state["selected_rel_path"]` (used from
      v0.2);
@@ -639,10 +639,10 @@ duckfleet paths ROOT [--cache-dir DIR]          prints root_dir and catalog path
      coloured by `family_strict`, databases without temporal columns listed
      below the chart;
    - health and errors table; rejected files table.
-6. `tests/_overview_app.py` imports `duckfleet_ui.views.overview` and calls
-   `render()`; `test_ui_smoke.py` builds a demo fleet in a temp dir, runs
+6. `tests/_overview_app.py` imports `duckflock_ui.views.overview` and calls
+   `render()`; `test_ui_smoke.py` builds a demo flock in a temp dir, runs
    `run_scan` with `workers=1` into a temp cache, points the app at it via
-   environment variables `DUCKFLEET_ROOT` and `DUCKFLEET_CACHE_DIR`, runs
+   environment variables `DUCKFLOCK_ROOT` and `DUCKFLOCK_CACHE_DIR`, runs
    `AppTest.from_file(...)` with `default_timeout=60`, and asserts no
    exceptions and that the metrics row is present. If `st.navigation`
    misbehaves under AppTest, keep the test on the wrapper script (TBC).
@@ -663,21 +663,21 @@ duckfleet paths ROOT [--cache-dir DIR]          prints root_dir and catalog path
 1. Every DuckDB connection in core opens with `read_only=True` and the four
    settings from Section 4 item 6; the catalog build is the only writer and
    it writes only inside the cache directory.
-2. `duckfleet_core` never imports streamlit, plotly or pandas at module
+2. `duckflock_core` never imports streamlit, plotly or pandas at module
    level. `test_core_smoke.py` guards this by importing every
-   `duckfleet_core` module in a subprocess and asserting `streamlit` is
+   `duckflock_core` module in a subprocess and asserting `streamlit` is
    absent from `sys.modules` there; keep the pandas import lazy inside
    `CatalogReader.df`.
 3. Quote every identifier in generated SQL with `"` and double embedded
    quotes. Never format user-provided strings into SQL; use parameters.
-4. Logging through `logging.getLogger("duckfleet")`; never print from core
+4. Logging through `logging.getLogger("duckflock")`; never print from core
    except the CLI's progress output.
 5. Type hints everywhere; pydantic for anything serialised; dataclasses for
    in-memory-only structures.
 6. Every heuristic carries a `# TUNING(<id>)` comment and a row in
    `docs/TUNING.md`.
 7. Tests use `tmp_path` and a temp cache dir; nothing touches the real user
-   cache. Fixture fleets come from `demo.make_demo_fleet`.
+   cache. Fixture flocks come from `demo.make_demo_flock`.
 
 ## 7. Windows and Linux
 
@@ -696,15 +696,15 @@ duckfleet paths ROOT [--cache-dir DIR]          prints root_dir and catalog path
 ## 8. Acceptance checklist (v0.1 done when all are ticked)
 
 1. CI green on Windows and Linux.
-2. `uv run duckfleet make-demo ./demo-fleet` then `uv run duckfleet scan
-   ./demo-fleet` reports the exact numbers of Phase 5 item 4; a second scan
+2. `uv run duckflock make-demo ./demo-flock` then `uv run duckflock scan
+   ./demo-flock` reports the exact numbers of Phase 5 item 4; a second scan
    reuses 10 profiles and retries the 1 failed one.
-3. `uv run duckfleet report ./demo-fleet` shows four strict families (3, 3,
+3. `uv run duckflock report ./demo-flock` shows four strict families (3, 3,
    2, 1 members) and three loose families (6, 2, 1), `events` with 3
    variants, the time windows in order, `wal_present` and
    `empty_database`, the `corrupt` error, and the 2 rejected files.
 4. Lock test passes on both OSes with `error.type == "locked"`.
-5. `uv run duckfleet-ui`, scan `./demo-fleet` from the sidebar on Windows
+5. `uv run duckflock-ui`, scan `./demo-flock` from the sidebar on Windows
    and on Linux: progress visible, every section of Phase 6 item 5 renders
    without an exception; a full rescan and a cached load both work.
 6. A scan of a folder with a non-ASCII name and a space works from the UI.
@@ -717,7 +717,7 @@ duckfleet paths ROOT [--cache-dir DIR]          prints root_dir and catalog path
 
 Database deep-dive page, SQL page, plots, cross-database attach,
 non-blocking scan, scan cancel, content hashes of small tables, identity
-query, SQLite or Parquet fleet members, encrypted files, query timeouts,
+query, SQLite or Parquet flock members, encrypted files, query timeouts,
 report export to files, watch folder. See `docs/ROADMAP.md`.
 
 ## 10. Open items for the implementer (TBC)

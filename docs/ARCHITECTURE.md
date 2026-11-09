@@ -1,14 +1,14 @@
 # Architecture
 
 Last updated: 2026-11-08 (0.4.1). Section 5 holds the final catalog schema,
-copied from `duckfleet_core/catalog.py` (`SCHEMA_SQL`).
+copied from `duckflock_core/catalog.py` (`SCHEMA_SQL`).
 
 ## 1. Two packages, one boundary
 
 ```
-packages/duckfleet-core    library + CLI; depends on duckdb, pydantic, platformdirs, psutil, pytz
+packages/duckflock-core    library + CLI; depends on duckdb, pydantic, platformdirs, psutil, pytz
                            (optional extra `export`: pyarrow)
-packages/duckfleet-ui      Streamlit app; depends on duckfleet-core, streamlit>=1.66, plotly, pandas, pyarrow
+packages/duckflock-ui      Streamlit app; depends on duckflock-core, streamlit>=1.66, plotly, pandas, pyarrow
 ```
 
 The boundary rule: core never imports the UI or its libraries at module
@@ -44,7 +44,7 @@ the CLI, notebooks and tests.
 8. **report**: text and Markdown summaries from the catalog.
 9. **cli**: `scan`, `report`, `make-demo`, `paths`, and (v0.2) `sql`,
    `summarize`, `preview`, (v0.3) `plot`.
-10. **demo**: generator of a small fleet with known properties, used by
+10. **demo**: generator of a small flock with known properties, used by
     tests and the acceptance checklist.
 11. **config / models**: `ScanConfig` (every option and its resolved
     default) and the pydantic models of a profile (`DatabaseProfile`,
@@ -71,14 +71,14 @@ the CLI, notebooks and tests.
     into one bounded DuckDB query (time buckets, numeric buckets, bins, reservoir sample, top-N
     folding) on the sandboxed query connection and returns `PlotData` (D-033, D-036).
 17. **cli_plot** (v0.3): the command `plot` (D-037); since 0.4 also `--databases` and `--family`.
-18. **fleet** (v0.4): `FleetSelection` (1 to 50 distinct rel_paths) and its aliases, `open_fleet` (an
+18. **flock** (v0.4): `FlockSelection` (1 to 50 distinct rel_paths) and its aliases, `open_flock` (an
     in-memory DuckDB; the members attached read-only from catalog paths, aliases that equal a union
     schema renamed, then external access off and the configuration locked, then every member view
-    probed, then one union view per table with a `database` column), `fleet_tables`,
-    `describe_fleet`, `run_fleet_query` (an error of the query is a `FleetQueryError` that carries the
-    connection's summary), `export_fleet_query`. Every connection has its own temp folder (D-040,
+    probed, then one union view per table with a `database` column), `flock_tables`,
+    `describe_flock`, `run_flock_query` (an error of the query is a `FlockQueryError` that carries the
+    connection's summary), `export_flock_query`. Every connection has its own temp folder (D-040,
     D-044, D-050).
-19. **cli_fleet** (v0.4): the commands `fleet-tables` and `fleet-sql` and the selection options
+19. **cli_flock** (v0.4): the commands `flock-tables` and `flock-sql` and the selection options
     `--databases` (repeatable), `--family`, `--all` (D-046, D-050).
 20. **content hash** (v0.4): `profiler._content_hash` stores `TableProfile.content_hash` for tables up to
     L-07 rows; the catalog has `tables.content_hash` and `CatalogReader.content_variants()`; the report
@@ -103,7 +103,7 @@ The reuse check compares size, mtime, WAL presence, profile schema version
 and DuckDB version. The pool is capped at 61 workers (`MAX_POOL_WORKERS`, the
 limit of `ProcessPoolExecutor` on Windows), also for an explicit `--workers`.
 
-The UI runs the scan as a subprocess (`python -m duckfleet_core scan
+The UI runs the scan as a subprocess (`python -m duckflock_core scan
 --progress json`) and reads progress events from its stdout. The process
 pool therefore never lives inside the Streamlit server process.
 
@@ -119,7 +119,7 @@ summaries/<file_key>/<table_key>.json  <--  SummaryStore (valid while size, mtim
 ```
 
 Plotting (v0.3) goes through the same sandboxed connection (`fetch_plot_data_on` runs the same plan on any open
-connection, `fetch_plot_data` and `fetch_fleet_plot_data` open one):
+connection, `fetch_plot_data` and `fetch_flock_plot_data` open one):
 
 ```
 Plot page / CLI plot --PlotSpec--> plotdata.fetch_plot_data
@@ -128,13 +128,13 @@ Plot page / CLI plot --PlotSpec--> plotdata.fetch_plot_data
         -> PlotData (at most max_points points) --> charts.figure (UI only) / CSV, JSON (CLI)
 ```
 
-Cross-database work (v0.4) goes through a fleet connection, opened per request:
+Cross-database work (v0.4) goes through a flock connection, opened per request:
 
 ```
-SQL page / Plot page / CLI fleet-sql, fleet-tables, plot --family
+SQL page / Plot page / CLI flock-sql, flock-tables, plot --family
      |  catalog: rel_path -> abs_path of the chosen databases (at most 50)
      v
-fleet.open_fleet:  duckdb.connect() in memory, own temp folder <pid>/fleet-<8 hex>
+flock.open_flock:  duckdb.connect() in memory, own temp folder <pid>/flock-<8 hex>
      ATTACH '<abs path>' AS <alias> (READ_ONLY) for each member   (a failure is an AttachFailure)
      DETACH and ATTACH again as <alias>_2 where an alias equals a schema of the union views
      SET enable_external_access = false; SET lock_configuration = true
@@ -143,17 +143,17 @@ fleet.open_fleet:  duckdb.connect() in memory, own temp folder <pid>/fleet-<8 he
      CREATE VIEW memory."<schema>"."<table>" AS SELECT '<rel_path>' AS database, * FROM <alias>... UNION ALL BY NAME ...
      |  user SQL / the plot plan runs here, under the timeout
      v
-result + FleetSummary (aliases, attach failures, union views)      connection closed, folder removed
+result + FlockSummary (aliases, attach failures, union views)      connection closed, folder removed
 ```
 
 ## 4. Storage locations
 
 ```
-<user cache dir>                      platformdirs.user_cache_dir("duckfleet", appauthor=False)
-                                      (D-015; Windows %LOCALAPPDATA%\duckfleet\Cache, Linux ~/.cache/duckfleet)
+<user cache dir>                      platformdirs.user_cache_dir("duckflock", appauthor=False)
+                                      (D-015; Windows %LOCALAPPDATA%\duckflock\Cache, Linux ~/.cache/duckflock)
   recent_roots.json
   tmp/<pid>/<file hash>/              DuckDB spill files of one process, one folder per file (0.3.1), removed at exit
-                                      (also the leaf of the catalog reader, 0.4.1); fleet-<8 hex>/ per fleet connection
+                                      (also the leaf of the catalog reader, 0.4.1); flock-<8 hex>/ per flock connection
   roots/<root_key>/
     root.txt
     profiles/<file_key>.json
@@ -173,7 +173,7 @@ end of every scan (build into `catalog.duckdb.tmp`, then `os.replace`).
 ```sql
 CREATE TABLE scan_runs (
     run_id VARCHAR, root VARCHAR, started_at TIMESTAMP, finished_at TIMESTAMP,
-    duckfleet_version VARCHAR, duckdb_version VARCHAR, workers INTEGER,
+    duckflock_version VARCHAR, duckdb_version VARCHAR, workers INTEGER,
     files_walked INTEGER, files_candidates INTEGER, files_rejected INTEGER,
     files_profiled INTEGER, files_reused INTEGER, files_failed INTEGER,
     truncated BOOLEAN, config_json VARCHAR
@@ -255,7 +255,7 @@ Rules:
    TIMESTAMPTZ values show in the machine's zone (D-026).
 5. Query timeout: a watcher in the calling thread calls `interrupt()` on the
    connection; no signals, so Windows and Linux behave alike.
-6. Fleet connections (v0.4): attached only from catalog paths and before the lockdown; user SQL
+6. Flock connections (v0.4): attached only from catalog paths and before the lockdown; user SQL
    never runs before `lock_configuration` is set; aliases and view names come from file and table
    names and are always quoted, rel_paths enter SQL only as escaped string literals; no cached
    connections; each connection is its own DuckDB instance with its own temp folder, because two
@@ -267,7 +267,7 @@ Rules:
 ## 7. UI structure (v0.4)
 
 ```
-launch.py         console script duckfleet-ui -> streamlit run app.py
+launch.py         console script duckflock-ui -> streamlit run app.py
 app.py            st.set_page_config, st.navigation(list(nav.PAGES.values()))
 nav.py            the st.Page objects: Overview, Database, Plot, SQL (views import it inside functions)
 common.py         environment, root and catalog resolution, keep_valid, the shared database
@@ -280,7 +280,7 @@ views/plot.py     render(): scope control, table (the union views in scope sever
 charts.py         palette, template, needs_panels, Plotly figures of PlotData, to_frame (no widgets)
 views/overview.py render(): sidebar (recent-roots selectbox, root folder, workers, max files,
                   full rescan, sniff all, Scan and Load existing catalog buttons), metrics,
-                  fleet table, families + matrix, table variants, identical content (the cap and
+                  flock table, families + matrix, table variants, identical content (the cap and
                   an older catalog's info), diff, timeline, health, rejected
 views/database.py render(): database selectbox, header, tables, lazy tabs Columns, Summary,
                   Preview, Open in SQL (sets scope one database), and Plot this table (hands the
@@ -292,16 +292,16 @@ views/sql.py      render(): scope control, schema expander (union views and alia
                   result grid, downloads, history
 scope.py          scope_control(dbs, families) -> Scope(mode, rel_paths): radio One database /
                   Several databases, multiselect (at most 50), Family selectbox (D-047)
-scan_runner.py    subprocess (python -m duckfleet_core scan --progress json) + JSON-lines
+scan_runner.py    subprocess (python -m duckflock_core scan --progress json) + JSON-lines
 catalog_access.py st.cache_data wrappers keyed by catalog path + mtime, DataFrames
 query_access.py   the process-wide QueryConfig (temp dir under the cache), cached preview pages and
                   plot data keyed by the file's live size and mtime, summary helpers, result
                   DataFrames (never cached for ad-hoc SQL)
 ```
 
-The pages read `DUCKFLEET_ROOT` and `DUCKFLEET_CACHE_DIR` for their defaults
-(the tests rely on them); `DUCKFLEET_QUERY_THREADS` and
-`DUCKFLEET_QUERY_MEMORY_MB` override the query connection's resources. State
+The pages read `DUCKFLOCK_ROOT` and `DUCKFLOCK_CACHE_DIR` for their defaults
+(the tests rely on them); `DUCKFLOCK_QUERY_THREADS` and
+`DUCKFLOCK_QUERY_MEMORY_MB` override the query connection's resources. State
 shared between pages lives in the session state: `active_root`,
 `selected_rel_path`, `selected_table`, `sql_text`. Widgets whose value must survive a visit to
 another page (the six sidebar inputs, `selected_rel_path`, `selected_table`, `sql_text`,

@@ -2,8 +2,8 @@
 
 Every hard and soft limit, its default, where it is configured, and what
 happens beyond it. Numbers marked (TBC) are proposals. The v0.1 and v0.2
-acceptance runs used the demo fleet only, so they stay (TBC) until a real
-fleet has been scanned.
+acceptance runs used the demo flock only, so they stay (TBC) until a real
+flock has been scanned.
 
 Last updated: 2026-11-08 (0.4.1).
 
@@ -20,17 +20,17 @@ Last updated: 2026-11-08 (0.4.1).
 | L-09 | SQL result in grid / download | 10 k rows shown (page option 1 to 100 k), 1 M rows download (TBC) | `QueryConfig.max_rows`, `max_download_rows` | grid truncated with a notice; download cut at the cap with a warning (D-023) | v0.2 |
 | L-10 | Worker crash | n/a | | a crashed pool marks the unfinished files `worker_crashed`; rerun the scan | v0.1 |
 | L-11 | Points per chart | 50 k after bucketing (TBC) | `PlotSpec.max_points` (page option, `--max-points`) | line charts become bucket aggregates (mean, min, max), scatter charts a reservoir sample; histograms and bars are bounded by L-18 to L-20 instead; the final query is checked against the budget, and the same guard checks histogram and bar results against their own bounds | v0.3 |
-| L-12 | Databases attached at once | 50 (confirmed in 0.4.0) | `fleet.MAX_MEMBERS`, `FleetSelection` | pick a subset; see L-22 | v0.4 |
+| L-12 | Databases attached at once | 50 (confirmed in 0.4.0) | `flock.MAX_MEMBERS`, `FlockSelection` | pick a subset; see L-22 | v0.4 |
 | L-13 | Recent roots remembered | 20 | | oldest dropped | v0.1 |
 | L-14 | Query timeout (SQL page, preview, summary, CLI) | 60 s (page option 1 to 3,600 s) (TBC) | `QueryConfig.timeout_s` | the query is interrupted and reported as `timeout`; the connection stays usable (D-024). A phase that never checks the interrupt (one huge allocation, the Arrow conversion of an export) can delay the stop; it is bounded and was never a hang in testing | v0.2 |
 | L-15 | Preview columns shown by default | 50 (TBC) | `QueryConfig.preview_max_columns` | the rest selectable in the multiselect | v0.2 |
 | L-16 | Per-column summary (`SUMMARIZE`) | exact up to L-05 rows, sampled above with L-06 rows | `QueryConfig.stats_row_threshold`, `stats_sample_rows` | `sampled=True` in the summary caption | v0.2 |
-| L-17 | Query connection threads and memory | `min(4, cpu_count)` threads, `min(4 GB, RAM/4)` memory, floor 512 MB (TBC) | `QueryConfig.threads`, `memory_limit_mb`, env `DUCKFLEET_QUERY_THREADS`, `DUCKFLEET_QUERY_MEMORY_MB` | resolved once per process (D-021); DuckDB spills or fails the query at the memory limit | v0.2 |
+| L-17 | Query connection threads and memory | `min(4, cpu_count)` threads, `min(4 GB, RAM/4)` memory, floor 512 MB (TBC) | `QueryConfig.threads`, `memory_limit_mb`, env `DUCKFLOCK_QUERY_THREADS`, `DUCKFLOCK_QUERY_MEMORY_MB` | resolved once per process (D-021); DuckDB spills or fails the query at the memory limit | v0.2 |
 | L-18 | Bar chart categories | 200 (TBC) | `PlotSpec.max_categories` | the rest summed into `(other)`, said in the caption | v0.3 |
-| L-19 | Plot series (colour values) | 8 for line, histogram, bar; 3 for scatter (TBC) | `PlotSpec.max_series` | the top series by row count kept, the rest folded into one grey `(other)` series (D-032); at most 8 y columns per plot (one colour each), more is rejected by the spec on the page and in `duckfleet plot` (0.3.1, W-03) | v0.3 |
+| L-19 | Plot series (colour values) | 8 for line, histogram, bar; 3 for scatter (TBC) | `PlotSpec.max_series` | the top series by row count kept, the rest folded into one grey `(other)` series (D-032); at most 8 y columns per plot (one colour each), more is rejected by the spec on the page and in `duckflock plot` (0.3.1, W-03) | v0.3 |
 | L-20 | Histogram bins | 50, range 5 to 500 (TBC) | `PlotSpec.bins` | rejected outside the range | v0.3 |
 | L-21 | Plot point budget (page option) | 50,000, range 100 to 500,000 (TBC); same as L-11 | `PlotSpec.max_points` | bucketing, sampling or folding reduces the data in DuckDB until it fits; the plot queries run under L-14 | v0.3 |
-| L-22 | Databases in one fleet connection (SQL and Plot scope, CLI `--databases`, `--family`, `--all`) | 50, same as L-12 | `FleetSelection` | a larger family is cut to the first 50 by rel_path with a caption; the CLI refuses more as a usage error | v0.4 |
+| L-22 | Databases in one flock connection (SQL and Plot scope, CLI `--databases`, `--family`, `--all`) | 50, same as L-12 | `FlockSelection` | a larger family is cut to the first 50 by rel_path with a caption; the CLI refuses more as a usage error | v0.4 |
 
 ## Known limitations without a number
 
@@ -57,7 +57,7 @@ Last updated: 2026-11-08 (0.4.1).
 8. **Network drives** work but scan at network speed; no special handling.
 9. **Views** are listed but not fingerprinted and not row-counted by
    default; a view that fails to bind is recorded as a table error.
-10. **DuckDB opens SQLite files.** duckfleet rejects them by header check;
+10. **DuckDB opens SQLite files.** duckflock rejects them by header check;
     if a real DuckDB file lacks the magic bytes (it should not), it is
     rejected too.
 11. **Windows and writer-held files.** DuckDB opens a file exclusively while a
@@ -94,13 +94,13 @@ Last updated: 2026-11-08 (0.4.1).
     (`max(1, cpu_count - 2)` by default); the pool never starts more
     processes than there are files to profile, and one file or one worker
     runs in the scan process itself.
-17. **Timing on the demo fleet (Windows, 24 CPUs).** A scan with a process
+17. **Timing on the demo flock (Windows, 24 CPUs).** A scan with a process
     pool has a start-up cost of about 1.3 s per worker process (spawn, import
-    of duckdb and pydantic), which dominates tiny fleets; a rescan that reuses
+    of duckdb and pydantic), which dominates tiny flocks; a rescan that reuses
     all profiles runs in about 0.1 s. The catalog build takes about 1.4 s per
     120,000 column rows (400 files with 10 tables of 30 columns).
 18. **Catalog rebuilt on every scan.** The cost grows with the total number of
-    columns in the fleet, not with the data volume (D-003, D-016).
+    columns in the flock, not with the data volume (D-003, D-016).
 19. **Query sandbox (v0.2).** The SQL page and the CLI open scanned files with
     `enable_external_access=false` and a locked configuration: no `COPY ... TO`,
     `ATTACH`, `read_csv`, `INSTALL`, `LOAD` or `SET`, and writes fail with
@@ -116,18 +116,18 @@ Last updated: 2026-11-08 (0.4.1).
     beyond 64 bits, a year outside the pandas range) are shown as text.
 22. **Summaries of views.** `SUMMARIZE` of a view runs the view's query and is
     not sampled (the row count of a view is unknown); it can reach the timeout.
-23. **One query config per process.** `DUCKFLEET_QUERY_THREADS` and
-    `DUCKFLEET_QUERY_MEMORY_MB` are read at the first `query_config()` call, not
+23. **One query config per process.** `DUCKFLOCK_QUERY_THREADS` and
+    `DUCKFLOCK_QUERY_MEMORY_MB` are read at the first `query_config()` call, not
     when the first query runs. That call happens at the first render of the SQL
     page (in either scope), the first render of the Plot page in scope several
-    databases (the table list opens a fleet connection), the first open Preview
+    databases (the table list opens a flock connection), the first open Preview
     tab of the Database page, the first summary computed there, or the first
     **Plot** press on the Plot page in scope one database (the cached preview and
-    plot functions call it); restart `duckfleet-ui` to change them.
+    plot functions call it); restart `duckflock-ui` to change them.
 24. **DuckDB temp directory (0.2.1, one folder per file since 0.3.1).** Every
-    connection duckfleet opens uses a folder under `<cache dir>/tmp/<pid>` as
+    connection duckflock opens uses a folder under `<cache dir>/tmp/<pid>` as
     DuckDB's `temp_directory`: `<pid>/<sha1(absolute path)[:16]>`, one leaf per
-    file per process (W-01, D-042); a fleet connection uses `<pid>/fleet-<8 hex>`
+    file per process (W-01, D-042); a flock connection uses `<pid>/flock-<8 hex>`
     and removes it when the connection closes. Without it DuckDB would spill into
     `<database path>.tmp` beside the scanned file (D-034), and two DuckDB
     instances in one process sharing one folder crash the process when both
@@ -175,17 +175,17 @@ Last updated: 2026-11-08 (0.4.1).
     keeps the wrong palette until the next rerun. The **Chart theme** option on
     the page (light or dark) is the workaround.
 33. **stderr encoding on Windows (0.3.1, P-10).** `--show-sql`, the summary line
-    and the notes of `duckfleet plot` go to stderr in the console encoding, so
+    and the notes of `duckflock plot` go to stderr in the console encoding, so
     non-ASCII identifiers can print as `?`; set `PYTHONUTF8=1` to see them. The
     data on stdout (`--format csv` or `json`) is always UTF-8 (item 26).
-34. **Fleet connection (0.4).** Up to 50 databases are attached read-only to one in-memory
+34. **Flock connection (0.4).** Up to 50 databases are attached read-only to one in-memory
     connection (L-12, L-22); a member that cannot be attached (locked, encrypted, corrupt,
     missing) is reported and the others work, and no member at all is an error. The union
     view of a table holds the rows of every member that has the table; a column missing in a
     member is NULL there. A column whose type differs across the members and is not numeric
     in all of them or temporal in all of them is shown as text (`UnionView.casts`), and a
     member table with a column named `database` makes that view label with
-    `duckfleet_database`. The union views and the aliases are the only schema the SQL sees
+    `duckflock_database`. The union views and the aliases are the only schema the SQL sees
     beyond `CREATE TEMP TABLE`; `ATTACH`, `COPY TO`, `read_csv`, `INSTALL`, `LOAD` and `SET`
     are refused as `blocked`, writes as `read_only`. Each request opens and closes its own
     connection with its own temp folder, so the attach cost (about 0.01 s for 8 files) is
@@ -214,9 +214,9 @@ Last updated: 2026-11-08 (0.4.1).
     this (D-050).
 36. **Older catalogs (0.4.1).** A catalog written before 0.4 has no `tables.content_hash`.
     `CatalogReader.content_variants()` checks the catalog's columns once and raises
-    `CatalogOutdatedError` (`older catalog: ... run duckfleet scan`); the Overview shows it
+    `CatalogOutdatedError` (`older catalog: ... run duckflock scan`); the Overview shows it
     as an info in the Identical content section and everything else works, `report` prints
-    it and exits 2. Run `duckfleet scan` (the first scan re-profiles every file, item 35).
+    it and exits 2. Run `duckflock scan` (the first scan re-profiles every file, item 35).
     The catalog reader's own DuckDB temp folder is the catalog's leaf under
     `<cache>/tmp/<pid>` (P-13).
 

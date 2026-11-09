@@ -1,8 +1,9 @@
-# duckfleet: instructions for Claude Code sessions
+# duckflock-explorer: instructions for Claude Code sessions
 
-duckfleet explores a folder tree of DuckDB files as one fleet: overview of
+duckflock explorer explores a folder tree of DuckDB files as one flock: overview of
 all files and their structures, then deep dive, SQL and plots on one file.
 Python 3.11, uv workspace, core library + Streamlit UI.
+Repository: https://github.com/bozso11/duckflock-explorer
 
 ## Read in this order
 
@@ -18,13 +19,13 @@ Python 3.11, uv workspace, core library + Streamlit UI.
 
 1. **Read-only.** Core never writes to a scanned database. Every connection
    to a scanned file is `read_only=True` with extension autoload off.
-2. **Core/UI split.** `duckfleet_core` never imports streamlit, plotly or
+2. **Core/UI split.** `duckflock_core` never imports streamlit, plotly or
    pandas at module level. The UI calls core; core never calls the UI.
 3. **Windows and Linux are equally important.** Process pools use the
    `spawn` context, paths inside data use `/`, no POSIX-only modules. CI
    runs both; both must be green.
 4. **Tests with every phase.** `uv run pytest` and `uv run ruff check .`
-   green before a commit. Test fixtures come from `duckfleet_core.demo`,
+   green before a commit. Test fixtures come from `duckflock_core.demo`,
    never from real user data. Test file basenames must be unique across
    packages.
 5. **Docs are part of done.** Any change to behaviour, a limit or a
@@ -45,17 +46,17 @@ uv sync --all-packages          # install everything (Python 3.11 via .python-ve
 uv lock                         # after editing any pyproject dependencies; commit uv.lock
 uv run pytest                   # all tests
 uv run ruff check .             # lint
-uv run duckfleet make-demo ./demo-fleet
-uv run duckfleet scan ./demo-fleet
-uv run duckfleet report ./demo-fleet
-uv run duckfleet-ui
+uv run duckflock make-demo ./demo-flock
+uv run duckflock scan ./demo-flock
+uv run duckflock report ./demo-flock
+uv run duckflock-ui
 ```
 
 ## Layout
 
 ```
-packages/duckfleet-core/src/duckfleet_core   library + CLI (no UI deps)
-packages/duckfleet-ui/src/duckfleet_ui       Streamlit app (views/, never pages/)
+packages/duckflock-core/src/duckflock_core   library + CLI (no UI deps)
+packages/duckflock-ui/src/duckflock_ui       Streamlit app (views/, never pages/)
 docs/                                        plan, scope, features, limits, tuning, decisions, roadmap
 ```
 

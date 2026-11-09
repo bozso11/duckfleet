@@ -20,7 +20,7 @@ decided unless marked (TBC) or listed in Section 10. Facts marked
 
 ## 1. What v0.4 delivers
 
-1. **Fleet connection**: several databases of the scanned fleet attached
+1. **Flock connection**: several databases of the scanned flock attached
    read-only to one sandboxed in-memory connection, with one union view per
    table name (`main.events` holds the `events` rows of every attached file
    with a `database` column), so one query or one plot spans files.
@@ -31,35 +31,35 @@ decided unless marked (TBC) or listed in Section 10. Facts marked
 3. **Content fingerprints of small tables** in the scan: tables up to L-07
    rows get a hash of their sorted content, so the Overview and the report
    can say "`config` has identical content in 6 of 8 files, 2 variants".
-4. **CLI**: `duckfleet fleet-tables`, `duckfleet fleet-sql`, and
-   `duckfleet plot --databases ...`.
+4. **CLI**: `duckflock flock-tables`, `duckflock flock-sql`, and
+   `duckflock plot --databases ...`.
 5. **0.3.1 fixes** from `docs/REVIEW_v0.3.md` (Phase 0).
 6. Everything works on Windows and Linux; CI runs the suite on both.
 
 ## 2. Repository layout after v0.4 (additions only)
 
 ```
-packages/duckfleet-core/src/duckfleet_core/
-  fleet.py             FleetSelection, aliases, open_fleet, fleet_tables, union views
-  cli_fleet.py         fleet-tables, fleet-sql
-  plotdata.py          + fetch_plot_data_on(con, ...) and fetch_fleet_plot_data(...)
+packages/duckflock-core/src/duckflock_core/
+  flock.py             FlockSelection, aliases, open_flock, flock_tables, union views
+  cli_flock.py         flock-tables, flock-sql
+  plotdata.py          + fetch_plot_data_on(con, ...) and fetch_flock_plot_data(...)
   profiler.py          + content hash of small tables
   catalog.py           + tables.content_hash, CatalogReader.content_variants()
-packages/duckfleet-core/tests/
-  test_fleet.py, test_cli_fleet.py, test_content_hash.py
-packages/duckfleet-ui/src/duckfleet_ui/
+packages/duckflock-core/tests/
+  test_flock.py, test_cli_flock.py, test_content_hash.py
+packages/duckflock-ui/src/duckflock_ui/
   scope.py             the scope control shared by the SQL and Plot pages
   views/sql.py, views/plot.py, views/overview.py   (scope; identical-content section)
-packages/duckfleet-ui/tests/
+packages/duckflock-ui/tests/
   test_ui_scope.py
 ```
 
 ## 3. Data contracts
 
-### 3.1 FleetSelection and aliases (`fleet.py`)
+### 3.1 FlockSelection and aliases (`flock.py`)
 
 ```python
-class FleetSelection(BaseModel):
+class FlockSelection(BaseModel):
     rel_paths: list[str]           # 1 to L-12 (50) members, distinct, in the given order
 
     def aliases(self) -> dict[str, str]: ...   # alias -> rel_path
@@ -72,7 +72,7 @@ order. Example: `exp_01/run_03/metrics.duckdb` -> `exp_01_run_03_metrics`.
 Aliases are identifiers built by us from file names, never from user text,
 and are always quoted with `quote_ident`.
 
-### 3.2 The fleet connection (`fleet.py`, decision D-040)
+### 3.2 The flock connection (`flock.py`, decision D-040)
 
 ```python
 @dataclass
@@ -80,7 +80,7 @@ class AttachFailure:
     rel_path: str; alias: str; kind: str; message: str   # kind as ProfileError.type
 
 @dataclass
-class FleetHandle:
+class FlockHandle:
     con: duckdb.DuckDBPyConnection
     aliases: dict[str, str]            # attached only
     failures: list[AttachFailure]
@@ -94,17 +94,17 @@ class UnionView:
     columns: list[tuple[str, str]]     # (name, type) of the view
 
 @contextlib.contextmanager
-def open_fleet(selection: FleetSelection, paths: dict[str, str], config: QueryConfig,
-               *, views: bool = True) -> Iterator[FleetHandle]: ...
+def open_flock(selection: FlockSelection, paths: dict[str, str], config: QueryConfig,
+               *, views: bool = True) -> Iterator[FlockHandle]: ...
 ```
 
 Open sequence (every step verified):
 
 1. `duckdb.connect()` (in-memory) with `threads`, `memory_limit`,
    `autoinstall_known_extensions=False`, `autoload_known_extensions=False`
-   and `temp_directory` = a leaf of its own, `<cache>/tmp/<pid>/fleet-<8 hex
+   and `temp_directory` = a leaf of its own, `<cache>/tmp/<pid>/flock-<8 hex
    chars of uuid4>`, created before `connect` and removed in the `finally`
-   after `con.close()`. Every fleet connection is a separate DuckDB
+   after `con.close()`. Every flock connection is a separate DuckDB
    instance (two browser tabs are two instances in one process), and two
    instances must never share a temp folder (review W-01). The in-memory
    default `temp_directory` is `.tmp` relative to the working directory
@@ -175,16 +175,16 @@ distinct hashes with member counts and members, ordered by count descending.
 def fetch_plot_data_on(con, db_name: str, spec: PlotSpec, config: QueryConfig,
                        *, started: float | None = None) -> PlotData: ...
 def fetch_plot_data(db_path, spec, config) -> PlotData: ...        # unchanged signature, calls the above
-def fetch_fleet_plot_data(selection, paths, spec, config) -> PlotData: ...
+def fetch_flock_plot_data(selection, paths, spec, config) -> PlotData: ...
 ```
 
-`fetch_fleet_plot_data` opens the fleet, points the spec at the union view
+`fetch_flock_plot_data` opens the flock, points the spec at the union view
 (`db_name="memory"`, `schema_name`, `table_name`), and runs the same plan.
 `database` is an ordinary VARCHAR column of the view: the page offers it as
 the default colour column, and the series cap (L-19) folds the rest into
 `(other)` as for any series. `PlotData.notes` carries the attach failures.
 
-### 3.5 Scope (`duckfleet_ui/scope.py`)
+### 3.5 Scope (`duckflock_ui/scope.py`)
 
 ```python
 @dataclass
@@ -221,7 +221,7 @@ and Plot pages.
    with a different config works (no `ConnectionException`).
 5. `md5(string_agg(t::VARCHAR, chr(10) ORDER BY t::VARCHAR))` is stable
    across files with identical content.
-6. `database_name(con)` on the fleet connection returns `memory`;
+6. `database_name(con)` on the flock connection returns `memory`;
    `duckdb_columns()` lists the columns of the union views under
    `database_name = 'memory'`, so `validate_spec` and `_table_columns` work
    unchanged.
@@ -233,7 +233,7 @@ and Plot pages.
 Implements every item of `docs/REVIEW_v0.3.md` Sections 2 to 4 and 6,
 shipped as one commit `v0.3.1: review fixes`.
 
-Core (`packages/duckfleet-core`):
+Core (`packages/duckflock-core`):
 
 1. W-01: the temp directory becomes `<cache>/tmp/<pid>/<sha1(abs
    path)[:16]>`, one leaf per file per process. `QueryConfig.temp_dir`
@@ -280,7 +280,7 @@ Core (`packages/duckfleet-core`):
 12. Test gaps of review Section 6 item 3: TIMESTAMP_S/MS/NS x, empty and
     single-row tables, `plot --format csv|json` through a subprocess.
 
-UI (`packages/duckfleet-ui`):
+UI (`packages/duckflock-ui`):
 
 13. W-03: `max_selections=8` on the y multiselect.
 14. W-04: the remembered request includes `kind`; a request for another
@@ -302,15 +302,15 @@ file per process), W-11 (`(other)` and `(null)` as data values), P-09
 CHANGELOG 0.3.1 entry listing the fixes by review ID; versions 0.3.1 in the
 three `pyproject.toml` files and both `__init__.py`.
 
-### Phase 1: fleet connection (`fleet.py`)
+### Phase 1: flock connection (`flock.py`)
 
-Implements Sections 3.1 and 3.2. Also `fleet_tables(con, aliases) ->
+Implements Sections 3.1 and 3.2. Also `flock_tables(con, aliases) ->
 dict[tuple[str, str], list[str]]` (which members have which table) and
-`run_fleet_query(selection, paths, sql, config, *, max_rows=None) ->
-tuple[QueryResult, FleetHandle summary]` using `execute_limited` under the
-timeout, plus `export_fleet_query(...)` mirroring `export_query`.
+`run_flock_query(selection, paths, sql, config, *, max_rows=None) ->
+tuple[QueryResult, FlockHandle summary]` using `execute_limited` under the
+timeout, plus `export_flock_query(...)` mirroring `export_query`.
 
-Tests (`test_fleet.py`, on the demo fleet): aliases (collisions, leading
+Tests (`test_flock.py`, on the demo flock): aliases (collisions, leading
 digits, non-ASCII); attach of 8 files and the union views (`events` has
 8,000 rows, `database` labels equal the rel_paths, `quality` is NULL for
 files without it); a member held by a writer becomes an `AttachFailure`
@@ -340,16 +340,16 @@ re-profiles every file.
 
 1. `plotdata.py` refactor of Section 3.4 (no behaviour change for one
    database; `test_plotdata.py` must pass unchanged).
-2. `cli_fleet.py`: `duckfleet fleet-tables ROOT [--databases a,b | --family
+2. `cli_flock.py`: `duckflock flock-tables ROOT [--databases a,b | --family
    F1 | --all]` prints each table with its member count and the members
-   that lack it; `duckfleet fleet-sql ROOT SQL [--databases | --family |
+   that lack it; `duckflock flock-sql ROOT SQL [--databases | --family |
    --all] [--max-rows] [--timeout] [--format table|csv|json]` runs on the
-   fleet connection with the union views; both print attach failures on
-   stderr. `duckfleet plot` gains `--databases` and `--family` (then the
+   flock connection with the union views; both print attach failures on
+   stderr. `duckflock plot` gains `--databases` and `--family` (then the
    table is the union view and `--color database` is the default). Exit
    codes as before; a selection above L-12 is a usage error.
 
-Tests (`test_cli_fleet.py`): the commands on the demo fleet, `--family`
+Tests (`test_cli_flock.py`): the commands on the demo flock, `--family`
 resolution through the catalog, the L-12 limit, exit codes.
 
 ### Phase 4: UI scope
@@ -365,29 +365,29 @@ resolution through the catalog, the L-12 limit, exit codes.
    page keeps mode `one`.
 3. Overview: the **Identical content** section after Table variants.
 
-Tests (`test_ui_scope.py`): scope default from the family; a fleet SQL
-query across 6 files returns 6 groups; a fleet plot of `events` coloured by
+Tests (`test_ui_scope.py`): scope default from the family; a flock SQL
+query across 6 files returns 6 groups; a flock plot of `events` coloured by
 `database` has 6 series; the cap caption at more than L-12 members; the
 Overview section renders the demo's `config` variants.
 
 ### Phase 5: tests, docs, acceptance
 
-`docs/FEATURES.md` (F-X-01, F-X-02, F-PLOT-04, F-FLEET-08 to `done v0.4`),
+`docs/FEATURES.md` (F-X-01, F-X-02, F-PLOT-04, F-FLOCK-08 to `done v0.4`),
 `docs/LIMITS.md` (L-07, L-12 confirmed; L-22 added), `docs/TUNING.md`
-(`content-hash`, `alias-rule` rows), `docs/ARCHITECTURE.md` (fleet
+(`content-hash`, `alias-rule` rows), `docs/ARCHITECTURE.md` (flock
 connection, scope, the content hash in the profile), `docs/DECISIONS.md`
 (TBC outcomes), `CHANGELOG.md` 0.4.0 with the acceptance results,
 `README.md`; versions 0.4.0.
 
 ## 6. Cross-cutting rules (in addition to v0.1 to v0.3)
 
-1. The fleet connection attaches only paths from the catalog, before the
+1. The flock connection attaches only paths from the catalog, before the
    lockdown; user SQL never runs before `lock_configuration` is set.
 2. Aliases and view names are built from file and table names and always
    quoted; rel_paths enter SQL only as escaped string literals in the view
    definitions.
-3. No cached fleet connections: open per request, close in `finally`.
-4. The temp directory of every fleet connection is its own leaf under the
+3. No cached flock connections: open per request, close in `finally`.
+4. The temp directory of every flock connection is its own leaf under the
    process folder, removed when the connection closes; two DuckDB instances
    never share a temp folder.
 
@@ -401,13 +401,13 @@ dependent).
 1. CI green on Windows and Linux for the 0.3.1 commit and every v0.4 phase
    commit.
 2. Phase 0: every item of `docs/REVIEW_v0.3.md` fixed with its test.
-3. `uv run duckfleet fleet-tables ./demo-fleet --family F1` lists `events`
-   and `config` with 3 members each; `uv run duckfleet fleet-sql
-   ./demo-fleet "select database, count(*) n from events group by 1 order by
+3. `uv run duckflock flock-tables ./demo-flock --family F1` lists `events`
+   and `config` with 3 members each; `uv run duckflock flock-sql
+   ./demo-flock "select database, count(*) n from events group by 1 order by
    1" --all` prints one row per readable file with `events` (the encrypted
    and corrupt files appear as attach failures on stderr); an `INSERT`
    exits 3 as `read_only`; `COPY TO` exits 3 as `blocked`.
-4. `uv run duckfleet plot ./demo-fleet --family F1 main.events --kind line
+4. `uv run duckflock plot ./demo-flock --family F1 main.events --kind line
    --x ts --y value --max-points 300 --format csv` prints bucketed rows
    with three `database` series.
 5. A rescan after 0.4.0 re-profiles every file once and `report` shows the
@@ -421,9 +421,9 @@ dependent).
 
 ## 9. Not in v0.4 (do not build)
 
-Cross-fleet joins beyond what the user writes in SQL, persistent fleet
+Cross-flock joins beyond what the user writes in SQL, persistent flock
 views or materialised unions, scanning two roots at once, writes of any
-kind, Datashader, identity queries (open option F-FLEET-09).
+kind, Datashader, identity queries (open option F-FLOCK-09).
 
 ## 10. Open items for the implementer (TBC)
 
@@ -434,4 +434,4 @@ kind, Datashader, identity queries (open option F-FLEET-09).
    text filter above it; keep L-12.
 3. The `database` column name on the union views: verify it never clashes
    with a column of the same name in a member table; if it does, name the
-   label column `duckfleet_database` and say so in the Schema expander.
+   label column `duckflock_database` and say so in the Schema expander.

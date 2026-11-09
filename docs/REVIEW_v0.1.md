@@ -10,7 +10,7 @@ v0.1.0 implements the plan faithfully. Every contract of plan Sections 3
 and 5 is present, the cross-cutting rules of Sections 6 and 7 hold, the
 documented deviations are sensible, and the acceptance checklist is true on
 re-check. The review found 10 confirmed defects, none on the main path of
-the demo fleet, and 3 of them should be fixed before v0.2 work starts
+the demo flock, and 3 of them should be fixed before v0.2 work starts
 (R-01, R-02, R-03). All fixes are Phase 0 of `docs/PLAN_v0.2.md` and ship
 as 0.1.1.
 
@@ -20,20 +20,20 @@ as 0.1.1.
    `windows-latest` (`gh run list`).
 2. 181 tests pass and ruff is clean on Windows (Python 3.11.9, duckdb
    1.5.6, streamlit 1.66.1, pandas 3.1.1).
-3. Demo fleet via CLI: 14 files walked, 11 candidates, 2 rejected, 10 ok,
+3. Demo flock via CLI: 14 files walked, 11 candidates, 2 rejected, 10 ok,
    1 failed (`corrupt`); rescan reuses 10 and retries 1; strict families of
    3, 3, 2, 1 members and loose families of 6, 2, 1; `events` with 3
    variants; 22 workers resolved on 24 CPUs.
 4. UI on Windows in a browser: root typed in the sidebar, Scan, progress
-   bar, then metrics, fleet table, families and matrix, variants, compare,
+   bar, then metrics, flock table, families and matrix, variants, compare,
    timeline with 9 bars, health, rejected; no browser console errors.
 5. Conformance read of every core module and of the UI against the plan.
 6. Every confirmed finding below was reproduced by the reviewer or by a
-   review pass with a script against a temporary fleet.
+   review pass with a script against a temporary flock.
 
 ## 2. Confirmed findings
 
-Severity: high = a real fleet can hit it and the tool then fails or
+Severity: high = a real flock can hit it and the tool then fails or
 misleads; medium = a crash or wrong result in an uncommon setup; low =
 cosmetic, hygiene or documentation.
 
@@ -44,7 +44,7 @@ cosmetic, hygiene or documentation.
 | R-03 | medium | `profiler.profile_database`, `config.ScanConfig` | An invalid tag regex raises out of `profile_database` (plan: never raises) and kills the scan with 1 and with N workers | `tag_patterns=["("]`; `_file_facts` runs outside the `try` and `error_profile` repeats it in the parent | `field_validator("tag_patterns")` compiling each pattern and requiring the `key` and `value` groups (usage error, exit 1 in the CLI); `_file_facts` inside the `try` with tag-less fallback |
 | R-04 | medium | `views/overview.py` sidebar, `config.resolved_workers` | On a machine with 64 or more logical CPUs the page raises before anything renders (`value` 62+ above `max_value` 61) | Workstations and servers with 64+ CPUs | Cap `resolved_workers()` at `MAX_POOL_WORKERS` in core (summary and pool then agree); the sidebar uses the capped value |
 | R-05 | low | `profiler._table_stats` | Temporal values outside Python's datetime range come back as strings and silently drop out of the window; LIMITS 14 claims a `table_error` that is not recorded | `TIMESTAMP '10000-01-01'` next to a normal row: `time_min` set, `time_max` NULL, no error | Record a table error and clear that table's window when a temporal min or max is not a date or datetime; correct LIMITS 14 |
-| R-06 | low | `discovery.discover` | The cache directory is not excluded from discovery | `--cache-dir` inside the root, or the user cache under a scanned home folder: the catalog becomes a fleet member on the next scan | Prune the resolved cache directory (realpath, case-normalised) from `dirnames` |
+| R-06 | low | `discovery.discover` | The cache directory is not excluded from discovery | `--cache-dir` inside the root, or the user cache under a scanned home folder: the catalog becomes a flock member on the next scan | Prune the resolved cache directory (realpath, case-normalised) from `dirnames` |
 | R-07 | low | `catalog.build_catalog` | The catalog writer connects without the four standard settings (extension autoload on) | Hygiene only; fixed SQL today | Pass the same config dict (minus `read_only`) |
 | R-08 | low | `views/overview.py` timeline | A database whose time window is a single instant draws a zero-width bar and is not listed below the chart either | A file with one event row, or a DATE column with one value | Pad the displayed bar to a minimum width and say so in the hover text; list single-instant databases in the caption |
 | R-09 | low | `views/overview.py` `_scan`, `scan_runner.py` | When the scan subprocess exits 0 without a `finished` event the page says "exit code 0"; stray stdout lines are never shown | A print statement in a future core change, or a crash after the catalog step | Say that no `finished` event arrived and append `stray_stdout` to the log expander |
@@ -54,12 +54,12 @@ cosmetic, hygiene or documentation.
 
 | ID | Where | Correction |
 |---|---|---|
-| R-11 | `CHANGELOG.md` 0.1.0 open item 1, `docs/DECISIONS.md` D-018, `docs/FEATURES.md` F-SCAN-09 | An `encrypted` fixture is producible with duckdb 1.5.6: `ATTACH 'x.duckdb' (ENCRYPTION_KEY 'k')` writes a file whose header keeps the magic; opening it read-only without a key raises `Cannot open encrypted database`, classified `encrypted`. Add the fixture to the demo fleet and a test; `incompatible_version` stays unverified |
+| R-11 | `CHANGELOG.md` 0.1.0 open item 1, `docs/DECISIONS.md` D-018, `docs/FEATURES.md` F-SCAN-09 | An `encrypted` fixture is producible with duckdb 1.5.6: `ATTACH 'x.duckdb' (ENCRYPTION_KEY 'k')` writes a file whose header keeps the magic; opening it read-only without a key raises `Cannot open encrypted database`, classified `encrypted`. Add the fixture to the demo flock and a test; `incompatible_version` stays unverified |
 | R-12 | `docs/LIMITS.md` L-02, `docs/ARCHITECTURE.md` Section 3 | The pool is capped at 61 workers (`MAX_POOL_WORKERS`, the Windows limit of `ProcessPoolExecutor`); undocumented |
-| R-13 | `CHANGELOG.md` 0.1.0 deviations | The plan's Phase 4 test text (second run reuses every profile) cannot hold for the demo fleet because the corrupt file is retried; the test asserts 10 of 11 and no timing |
-| R-14 | `docs/ARCHITECTURE.md` Section 4 | Cache path wording predates D-015 (`appauthor=False`; Windows `%LOCALAPPDATA%\duckfleet\Cache`); `catalog.duckdb.tmp` missing from the listing |
+| R-13 | `CHANGELOG.md` 0.1.0 deviations | The plan's Phase 4 test text (second run reuses every profile) cannot hold for the demo flock because the corrupt file is retried; the test asserts 10 of 11 and no timing |
+| R-14 | `docs/ARCHITECTURE.md` Section 4 | Cache path wording predates D-015 (`appauthor=False`; Windows `%LOCALAPPDATA%\duckflock\Cache`); `catalog.duckdb.tmp` missing from the listing |
 | R-15 | `docs/FEATURES.md` F-SCAN-10 | Reuse also compares the profile schema version |
-| R-16 | `docs/ARCHITECTURE.md` Section 7, `packages/duckfleet-ui/pyproject.toml` | Sidebar description omits the recent-roots selectbox and the Load button; the package description lists pages that do not exist yet |
+| R-16 | `docs/ARCHITECTURE.md` Section 7, `packages/duckflock-ui/pyproject.toml` | Sidebar description omits the recent-roots selectbox and the Load button; the package description lists pages that do not exist yet |
 
 ## 4. Plausible, not reproduced
 

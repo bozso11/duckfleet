@@ -12,9 +12,9 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "duckfleet-core",
-    "duckfleet-ui",
-    "duckfleet-workspace",
+    "duckflock-core",
+    "duckflock-explorer-workspace",
+    "duckflock-ui",
 ]
 
 [[package]]
@@ -199,9 +199,9 @@ wheels = [
 ]
 
 [[package]]
-name = "duckfleet-core"
-version = "0.4.1"
-source = { editable = "packages/duckfleet-core" }
+name = "duckflock-core"
+version = "0.5.0"
+source = { editable = "packages/duckflock-core" }
 dependencies = [
     { name = "duckdb" },
     { name = "platformdirs" },
@@ -227,35 +227,14 @@ requires-dist = [
 provides-extras = ["export"]
 
 [[package]]
-name = "duckfleet-ui"
-version = "0.4.1"
-source = { editable = "packages/duckfleet-ui" }
-dependencies = [
-    { name = "duckfleet-core" },
-    { name = "pandas" },
-    { name = "plotly" },
-    { name = "pyarrow" },
-    { name = "streamlit" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "duckfleet-core", editable = "packages/duckfleet-core" },
-    { name = "pandas", specifier = ">=2.2,<4" },
-    { name = "plotly", specifier = ">=5.24" },
-    { name = "pyarrow", specifier = ">=17" },
-    { name = "streamlit", specifier = ">=1.66,<2" },
-]
-
-[[package]]
-name = "duckfleet-workspace"
-version = "0.4.1"
+name = "duckflock-explorer-workspace"
+version = "0.5.0"
 source = { virtual = "." }
 
 [package.dev-dependencies]
 dev = [
-    { name = "duckfleet-core" },
-    { name = "duckfleet-ui" },
+    { name = "duckflock-core" },
+    { name = "duckflock-ui" },
     { name = "pytest" },
     { name = "pytest-timeout" },
     { name = "ruff" },
@@ -265,11 +244,32 @@ dev = [
 
 [package.metadata.requires-dev]
 dev = [
-    { name = "duckfleet-core", editable = "packages/duckfleet-core" },
-    { name = "duckfleet-ui", editable = "packages/duckfleet-ui" },
+    { name = "duckflock-core", editable = "packages/duckflock-core" },
+    { name = "duckflock-ui", editable = "packages/duckflock-ui" },
     { name = "pytest", specifier = ">=8.3" },
     { name = "pytest-timeout", specifier = ">=2.3" },
     { name = "ruff", specifier = ">=0.6" },
+]
+
+[[package]]
+name = "duckflock-ui"
+version = "0.5.0"
+source = { editable = "packages/duckflock-ui" }
+dependencies = [
+    { name = "duckflock-core" },
+    { name = "pandas" },
+    { name = "plotly" },
+    { name = "pyarrow" },
+    { name = "streamlit" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "duckflock-core", editable = "packages/duckflock-core" },
+    { name = "pandas", specifier = ">=2.2,<4" },
+    { name = "plotly", specifier = ">=5.24" },
+    { name = "pyarrow", specifier = ">=17" },
+    { name = "streamlit", specifier = ">=1.66,<2" },
 ]
 
 [[package]]

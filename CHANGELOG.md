@@ -2,14 +2,94 @@
 
 ## Unreleased
 
-1. `docs/PLAN_rename.md`: plan for the rename to duckflock-explorer (product name and the domain word "fleet" to "flock"), to ship as 0.5.0. Decision D-051.
+## 0.5.0 (2026-11-09)
+
+Renamed to duckflock-explorer; no functional change (decision D-051, recipe in
+`docs/PLAN_rename.md`, deviations in D-052). The product name changes in the code, the
+documentation and the repository, and the domain word "fleet" becomes "flock" everywhere,
+including commands, classes, modules, environment variables and prose. Imports, commands and
+environment variables change, which is why this is a minor version. The git history keeps the old
+names and is not rewritten.
+
+### What changed (Section 1 of the plan, condensed)
+
+| Old | New |
+|---|---|
+| repository `bozso11/duckfleet` | `bozso11/duckflock-explorer` (the old URL redirects) |
+| workspace project `duckfleet-workspace` | `duckflock-explorer-workspace` |
+| distributions `duckfleet-core`, `duckfleet-ui` | `duckflock-core`, `duckflock-ui` |
+| import packages `duckfleet_core`, `duckfleet_ui` | `duckflock_core`, `duckflock_ui` |
+| console scripts `duckfleet`, `duckfleet-ui`; `python -m duckfleet_core` | `duckflock`, `duckflock-ui`; `python -m duckflock_core` |
+| environment variables `DUCKFLEET_*` | `DUCKFLOCK_*` |
+| cache folder `user_cache_dir("duckfleet")` | `user_cache_dir("duckflock")` |
+| excluded directory default `.duckfleet` | `.duckflock` |
+| union-view fallback label column `duckfleet_database` | `duckflock_database` |
+| logger name `duckfleet` | `duckflock` |
+| Streamlit page title and sidebar header | `duckflock explorer` |
+| modules `fleet.py`, `cli_fleet.py`; tests `test_fleet.py`, `test_fleet_plot.py`, `test_cli_fleet.py` | `flock.py`, `cli_flock.py`; `test_flock.py`, `test_flock_plot.py`, `test_cli_flock.py` |
+| CLI commands `fleet-tables`, `fleet-sql` | `flock-tables`, `flock-sql` |
+| classes `FleetSelection`, `FleetSummary`, `FleetHandle`, `FleetQueryError`; functions `open_fleet`, `fleet_tables`, `run_fleet_query`, `export_fleet_query`, `describe_fleet`, `fetch_fleet_plot_data`, `make_demo_fleet`, `ensure_fleet_temp_dir`, ... | the same with `flock` |
+| feature IDs `F-FLEET-nn` | `F-FLOCK-nn` |
+| demo folder `demo-fleet` | `demo-flock` |
+| the word "fleet" in prose, UI text and docs | "flock" |
+
+### Upgrading
+
+1. Run `uv sync --all-packages` (the lock file is regenerated with the new names). The commands
+   are `duckflock` and `duckflock-ui`; scripts that set `DUCKFLEET_ROOT`, `DUCKFLEET_CACHE_DIR`,
+   `DUCKFLEET_QUERY_THREADS` or `DUCKFLEET_QUERY_MEMORY_MB` must set the `DUCKFLOCK_` names.
+2. An existing cache under the old folder is not reused: the first use after the upgrade scans
+   again. The old cache folder (`duckfleet` under the user cache directory) can be deleted by hand.
+3. A directory named `.duckfleet` is no longer skipped by the scan by default; `.duckflock` is.
+4. A member table that has its own `database` column gets the label column `duckflock_database`
+   (it was `duckfleet_database`).
+
+### Checks (plan Section 5)
+
+1. [x] `uv run ruff check .` clean; `uv run pytest`: 841 passed (2 min 48 s on Windows). No test
+   needed a change other than the renamed names, the version and the page-title strings of the
+   AppTest apps.
+2. [x] CLI on a freshly generated flock (`duckflock make-demo ./demo-flock`, Windows,
+   2026-11-09), with the outputs of 0.4.0 items 3 to 5 under the new names:
+   - `duckflock paths ./demo-flock` shows the new cache folder
+     (`%LOCALAPPDATA%\duckflock\Cache\roots\<hash>`); `scan`: 13 candidates, 2 rejected, 10 ok,
+     3 failed, 0 reused; `report` prints `versions: duckflock 0.5.0, ...` and the content variant
+     lines as in 0.4.0 item 5 (`main.config` 1 variant over 8 databases, `main.events` 8 variants
+     over 8 databases, `main.notes` 1 over 2, `main.samples` 1 over 1).
+   - `flock-tables ./demo-flock --family F1` lists `main.config` and `main.events` with 3 members
+     of 3; stderr starts `duckflock: flock: 3 of 3 databases attached`.
+   - `flock-sql ./demo-flock "select database, count(*) n from events group by 1 order by 1" --all`
+     prints the 8 files with `events` (1000 rows each) and three `duckflock: attach failed:` lines
+     on stderr (`broken/corrupt.duckdb` and `broken/highbit.duckdb` `corrupt`,
+     `secure/encrypted.duckdb` `encrypted`).
+   - `insert into events ...` exits 3 as `read_only` (`duckflock: query error (read_only): ...`);
+     `copy events to 'x.csv'` exits 3 as `blocked` and writes no file.
+   - `plot ./demo-flock --family F1 main.events --kind line --x ts --y value --max-points 300
+     --format csv` exits 0 and prints 84 bucketed rows with the three `database` series; the
+     stderr line reads `duckflock: plot: databases=3 strategy=time_bucket bucket=6 hours
+     points=84 rows_scanned=3000 ...`.
+3. [x] `duckflock-ui` starts (headless, port 8765). In the built-in browser the tab title, the
+   Overview title and the sidebar header read "duckflock explorer". Only the start page was
+   looked at by hand; the four pages render through AppTest in the suite.
+4. [ ] CI on `ubuntu-latest` and `windows-latest`: recorded below once the run has finished.
+
+### Deviations from the plan (D-052)
+
+1. `docs/PLAN_rename.md`, the D-051 row and the former Unreleased line were left out of the text
+   pass because they quote the old names on purpose. This table and D-052 quote them too, so
+   `git ls-files | xargs grep -il fleet` lists `CHANGELOG.md`, `docs/DECISIONS.md` and
+   `docs/PLAN_rename.md`; `git ls-files | grep -i fleet` lists nothing.
+2. The sidebar header and the Overview title read "duckflock explorer" like the page title.
+3. `README.md` and `CLAUDE.md` had no repository URL; a "Repository:" line was added to both.
+4. The ignored local folder `demo-fleet/` was deleted and the demo generated again as
+   `demo-flock`.
 
 ## 0.4.1 (2026-11-08)
 
 Fixes from `docs/REVIEW_v0.4.md` (decision D-049; choices in D-050), shipped as one commit
 directly from the review document: Section 2 (X-01 to X-13), Section 3 (P-12 to P-15) and the
 test gaps of Section 5. Also in this release: `docs/REVIEW_v0.4.md` (review of 0.4.0, 13 confirmed
-defects, four medium) and D-049 (planning documents only). The demo fleet and its default numbers
+defects, four medium) and D-049 (planning documents only). The demo flock and its default numbers
 are unchanged. Upgrading needs no rescan; a catalog written by 0.3.x still needs one for the
 Identical content section (X-04). There is no v0.5 plan.
 
@@ -28,28 +108,28 @@ Identical content section (X-04). There is no v0.5 plan.
    after the lockdown and before the first union view exists. A view that no longer binds (its
    base table is gone) used to fall back to the in-memory union view of that name and return the
    other members' rows under its own label. Such a member is now left out of that union view and
-   listed in `FleetSummary.view_failures` as `("main.vw", "<rel_path>: <message>")`; a table whose
+   listed in `FlockSummary.view_failures` as `("main.vw", "<rel_path>: <message>")`; a table whose
    holders all fail has no union view.
 4. **X-04 (medium)** `CatalogReader` checks the catalog's columns once (`_ADDED_COLUMNS`) and
-   `content_variants()` raises `CatalogOutdatedError` ("older catalog: ... run `duckfleet scan`")
+   `content_variants()` raises `CatalogOutdatedError` ("older catalog: ... run `duckflock scan`")
    for a catalog without `tables.content_hash`. The Overview shows it as an info in the Identical
-   content section with the rest of the page intact; `duckfleet report` prints it with the command
+   content section with the rest of the page intact; `duckflock report` prints it with the command
    to run and exits 2 (it was a raw binder error).
 5. **X-05** An alias equal to a non-`main` schema name of the chosen files made `CREATE VIEW
    "s"."t"` and the user's `SELECT * FROM s.t` ambiguous. Such a member is detached and attached
    again as `<alias>_2`, `_3`, ... before the lockdown, and the union views are created as
    `memory."<schema>"."<table>"`.
-6. **X-06** A failing `fleet-sql` query hid the attach failures. `run_fleet_query` raises
-   `FleetQueryError` (a `QueryError`) that carries the connection's summary, and the command prints
+6. **X-06** A failing `flock-sql` query hid the attach failures. `run_flock_query` raises
+   `FlockQueryError` (a `QueryError`) that carries the connection's summary, and the command prints
    the failures before the error (exit 3 as before).
 7. **X-07** `plot --kind bar --x database` without `--color` also coloured by `database` (a
    duplicate column); the default colour is skipped when `--x` is the label column.
-8. **X-08** `FleetSummary.view_failures` is shown as a warning next to the attach warning on the
+8. **X-08** `FlockSummary.view_failures` is shown as a warning next to the attach warning on the
    SQL page (Schema expander and above the result) and on the Plot page.
 9. **X-09** **Open in SQL** on the Database page sets the scope to one database (a button callback,
    like **Plot this table**), so the template no longer runs on a union view.
 10. **X-10** The Schema expander names each view's label column and the placeholder query is built
-    from it (`duckfleet_database` where a member table has its own `database` column), using
+    from it (`duckflock_database` where a member table has its own `database` column), using
     `events` when there is one, else the first union view.
 11. **X-11** The Plot page caption counts the databases that hold the table (the view's members),
     not the attached ones.
@@ -71,15 +151,15 @@ Identical content section (X-04). There is no v0.5 plan.
 
 X-01: the hash changes with the other column, the alias skips column names in any case, the alias
 does not enter the hash. X-02: `main`, `system`, `temp`, `memory` (also upper case) attach next to
-another file. X-03: the three-file fleet of the review, a view that fails in every member, healthy
+another file. X-03: the three-file flock of the review, a view that fails in every member, healthy
 views stay. X-04: the reader, `report` (exit 2 and the message, then a scan) and the Overview with a
 catalog whose `content_hash` column is dropped. X-05: the review's `s.duckdb`/`u.duckdb`, suffixes
 that skip taken names, a schema in another case. X-06: the error carries the summary, the CLI prints
 the failures first. X-07: the bar chart by `database`. X-08 to X-12: AppTest of both pages, the
 Database page and the Overview. P-12: repeated flags and a comma in a rel_path. P-13: the reader's
-config. Gaps: a spilling fleet query that then lists the working directory; `fleet-sql` and
-`fleet-tables` through a subprocess with a latin-1 stdout (csv and json); a plot over a
-`duckfleet_database` view; `--family` above 50; the series assertion of `test_cli_fleet.py` without
+config. Gaps: a spilling flock query that then lists the working directory; `flock-sql` and
+`flock-tables` through a subprocess with a latin-1 stdout (csv and json); a plot over a
+`duckflock_database` view; `--family` above 50; the series assertion of `test_cli_flock.py` without
 its `or`; `glob()`, `read_text()`, `CREATE SECRET` and `IMPORT DATABASE` in the lockdown list.
 
 ### Deviations from the review's fix column
@@ -96,8 +176,8 @@ and a rescan of every file for them is not worth it.
 
 ### Open after 0.4.1
 
-1. Linux and a real fleet: as after 0.4.0 (AppTest in CI only; the numbers marked (TBC) in
-   `docs/LIMITS.md` are untested on a real fleet).
+1. Linux and a real flock: as after 0.4.0 (AppTest in CI only; the numbers marked (TBC) in
+   `docs/LIMITS.md` are untested on a real flock).
 2. The UI does not show the attach failures of a query that failed (the Schema expander warns
    already); only the CLI does.
 3. No LICENSE file (D-014), owner decision.
@@ -110,7 +190,7 @@ the first scan after the upgrade profiles all files again (the next one reuses t
 
 ### What it does
 
-1. **Fleet connection** (`duckfleet_core.fleet`): the chosen databases (at most 50) are attached
+1. **Flock connection** (`duckflock_core.flock`): the chosen databases (at most 50) are attached
    read-only, from catalog paths, to one in-memory DuckDB connection; then external access is
    turned off and the configuration locked; then one union view per table name holds the rows of
    every member with a `database` column (the rel_path). A member that cannot be attached is
@@ -122,7 +202,7 @@ the first scan after the upgrade profiles all files again (the next one reuses t
    coloured by `database` and say how many files were folded into `(other)`.
 3. **Content fingerprints** of tables up to 10,000 rows (md5 of the sorted rows) in the scan, the
    catalog, the report (**Identical small tables**) and the Overview (**Identical content**).
-4. **CLI**: `fleet-tables`, `fleet-sql` and `plot --databases/--family`.
+4. **CLI**: `flock-tables`, `flock-sql` and `plot --databases/--family`.
 5. **0.3.1 fixes**: see the entry below.
 
 ### Acceptance checklist (plan Section 8)
@@ -135,13 +215,13 @@ the first scan after the upgrade profiles all files again (the next one reuses t
    died on the same HTTP 504 download before any test, the re-run of that job passed: 798 tests).
    This entry's own commit changes documentation only.
 2. [x] Phase 0: every item of `docs/REVIEW_v0.3.md` fixed with its test (entry 0.3.1; 75 tests).
-3. [x] On the demo fleet: `duckfleet fleet-tables ./demo-fleet --family F1` lists `main.config`
-   and `main.events` with 3 members each; `fleet-sql ./demo-fleet "select database, count(*) n from
+3. [x] On the demo flock: `duckflock flock-tables ./demo-flock --family F1` lists `main.config`
+   and `main.events` with 3 members each; `flock-sql ./demo-flock "select database, count(*) n from
    events group by 1 order by 1" --all` prints the 8 files with `events` (1000 rows each) and
    three attach failures on stderr (`broken/corrupt.duckdb` and `broken/highbit.duckdb` `corrupt`,
    `secure/encrypted.duckdb` `encrypted`); `insert into events ...` exits 3 as `read_only` (also
    `insert into <alias>.main.events ...`); `copy events to 'x.csv'` exits 3 as `blocked`.
-4. [x] `duckfleet plot ./demo-fleet --family F1 main.events --kind line --x ts --y value
+4. [x] `duckflock plot ./demo-flock --family F1 main.events --kind line --x ts --y value
    --max-points 300 --format csv` exits 0 and prints 84 bucketed rows (6 hours) with the three
    `database` series; the stderr summary says `databases=3 strategy=time_bucket bucket=6 hours`.
 5. [x] A scanned cache rewritten as 0.3.x left it (profile version 1) is profiled again in full by
@@ -151,8 +231,8 @@ the first scan after the upgrade profiles all files again (the next one reuses t
    within each experiment), `main.notes: 1 content variant over 2 databases` and `main.events: 8
    content variants over 8 databases, no two are identical`. Also
    `test_a_cache_from_version_one_is_profiled_again_in_full`.
-6. [x] UI. Windows, by hand in the built-in browser with `duckfleet-ui` (dark theme) on a freshly
-   generated `make-demo` fleet scanned from the page: the Overview has the section **Identical
+6. [x] UI. Windows, by hand in the built-in browser with `duckflock-ui` (dark theme) on a freshly
+   generated `make-demo` flock scanned from the page: the Overview has the section **Identical
    content** (`main.config` 1 variant over 8 databases, `main.events` 8 variants, `main.notes` and
    `main.samples` 1 variant each) and its expander; the SQL page in scope *Several databases* with
    the F1 family selected (3 of 10 readable databases, the placeholder query
@@ -174,15 +254,15 @@ the first scan after the upgrade profiles all files again (the next one reuses t
    casts to VARCHAR are therefore decided up front by type family (numeric, temporal, else text);
    the plan's retry on a `BinderException` stays as a safety net (D-044; plan Section 10 item 1).
 2. A member table with its own `database` column breaks the union binder, so that view labels with
-   `duckfleet_database` (`UnionView.label_column`; plan Section 10 item 3, D-044).
-3. Additions to the contracts: `FleetSummary` (what `run_fleet_query` returns instead of the
-   handle), `FleetHandle.view_failures`, `UnionView.label_column`, `fleet.describe_fleet`, an error
+   `duckflock_database` (`UnionView.label_column`; plan Section 10 item 3, D-044).
+3. Additions to the contracts: `FlockSummary` (what `run_flock_query` returns instead of the
+   handle), `FlockHandle.view_failures`, `UnionView.label_column`, `flock.describe_flock`, an error
    for a y or x column that is text in the union view (D-044, D-046).
 4. The hash depends on column names, their order and the values as printed; a type counts only
-   through its printed form (the plan says "types"; D-045). The demo fleet is unchanged: its
+   through its printed form (the plan says "types"; D-045). The demo flock is unchanged: its
    `config` is the same in all 8 files, so the Overview shows 1 variant for it (an existing demo
    test relies on that).
-5. `--all` (the default of `fleet-tables` and `fleet-sql`) includes databases whose scan failed
+5. `--all` (the default of `flock-tables` and `flock-sql`) includes databases whose scan failed
    (D-046); a write to a union view is `read_only` (D-044).
 6. W-05 is fixed with unique helper column names instead of qualifying every column (D-043).
 7. The Overview section Identical content was built in Phase 2 with the report section (the plan
@@ -197,7 +277,7 @@ Outcomes of the plan's (TBC) items: Section 10 item 1 and 3 in D-044; item 2 in 
 1. Linux: no manual browser session, only AppTest in CI (WSL has no uv).
 2. In the browser only the dark theme, a family of 3 and the line chart were seen; the 50-database
    selection, the Family selectbox and the folded-files caption are checked through AppTest.
-3. The numbers marked (TBC) in `docs/LIMITS.md` and the tuning points are untested on a real fleet;
+3. The numbers marked (TBC) in `docs/LIMITS.md` and the tuning points are untested on a real flock;
    the attach cost was only measured for 8 files (0.01 s) and is paid on every query and every
    rerun of the Plot page in scope *several databases*.
 4. Nested columns of unequal types (a STRUCT with other fields, a LIST of another type) are shown
@@ -210,7 +290,7 @@ Outcomes of the plan's (TBC) items: Section 10 item 1 and 3 in D-044; item 2 in 
 
 CI: commit `9e11c77` (phase 3) was green on both OSes (run 42464481443).
 
-1. **Scope** (`duckfleet_ui/scope.py`): a radio *One database / Several databases* on the SQL and
+1. **Scope** (`duckflock_ui/scope.py`): a radio *One database / Several databases* on the SQL and
    Plot pages, shared through the session state (`scope_mode`, `scope_rel_paths`). In *several
    databases* a multiselect (at most 50, status `ok` only) starts as the strict family of the
    selected database, or that database alone; a **Family** selectbox fills it with a family; a
@@ -218,7 +298,7 @@ CI: commit `9e11c77` (phase 3) was green on both OSes (run 42464481443).
 2. **SQL page** in *several databases*: the Schema expander lists the union views with their
    database counts and columns, and the aliases; the placeholder query is
    `SELECT database, count(*) FROM events GROUP BY 1`; results and CSV/Parquet downloads work as
-   before (`fleet_*` file names); databases that cannot be attached show as a warning above the
+   before (`flock_*` file names); databases that cannot be attached show as a warning above the
    result.
 3. **Plot page** in *several databases*: the Table selectbox lists the union views, the colour
    defaults to `database` (a bar chart of the databases needs none), and the caption names the
@@ -230,16 +310,16 @@ CI: commit `9e11c77` (phase 3) was green on both OSes (run 42464481443).
 CI: commit `cb96242` (phase 2) was green on both OSes (run 42463850373).
 
 1. `plotdata.fetch_plot_data_on(con, db_name, spec, config)` runs the plot on an open connection;
-   `fetch_plot_data` is unchanged for callers and `fetch_fleet_plot_data(selection, paths, spec,
+   `fetch_plot_data` is unchanged for callers and `fetch_flock_plot_data(selection, paths, spec,
    config)` plots a union view (`db_name="memory"`); the members that could not be attached are
    `PlotData.notes`. A column that is text in the view because its types differ cannot be a y
-   column or a line/scatter x (a clear error). `fleet.describe_fleet` returns the union views
+   column or a line/scatter x (a clear error). `flock.describe_flock` returns the union views
    without a query.
-2. `duckfleet fleet-tables ROOT [--databases a,b | --family F1 | --all]` lists each table with
-   its member count and the members that lack it; `duckfleet fleet-sql ROOT SQL [...] [--max-rows]
-   [--timeout] [--format table|csv|json]` runs SQL on the fleet connection. Both print attach
+2. `duckflock flock-tables ROOT [--databases a,b | --family F1 | --all]` lists each table with
+   its member count and the members that lack it; `duckflock flock-sql ROOT SQL [...] [--max-rows]
+   [--timeout] [--format table|csv|json]` runs SQL on the flock connection. Both print attach
    failures on stderr; the default selection is `--all`; more than 50 databases is a usage error.
-3. `duckfleet plot ROOT --family F1 main.events ...` (or `--databases a,b`) plots the union view
+3. `duckflock plot ROOT --family F1 main.events ...` (or `--databases a,b`) plots the union view
    and colours by `database` unless `--color` says otherwise (D-046).
 
 ### Phase 2: content hash
@@ -250,39 +330,39 @@ CI: commit `cb96242` (phase 2) was green on both OSes (run 42463850373).
    off), `"empty"` for an empty table, nothing for a larger table, a view or a table whose rows
    cannot be hashed (that is not a table error). The catalog has `tables.content_hash` and
    `CatalogReader.content_variants()`.
-2. `duckfleet report` has the section **Identical small tables** (per table: content variants and
+2. `duckflock report` has the section **Identical small tables** (per table: content variants and
    the largest group); the Overview page has the section **Identical content** after Table
-   variants. On the demo fleet `config` is the same in all 8 databases, `notes` in both exp_03 runs,
+   variants. On the demo flock `config` is the same in all 8 databases, `notes` in both exp_03 runs,
    and no two `events` tables are alike.
 3. The hash depends on the column names, their order and the values as DuckDB prints them; a type
    matters only through its printed form (INTEGER 1 and VARCHAR '1' print alike; D-045).
 
-### Phase 1: fleet connection
+### Phase 1: flock connection
 
 CI: commit `b9753d9` was green on both OSes (run 42463125448).
 
-1. `duckfleet_core.fleet`: `FleetSelection` (1 to 50 distinct rel_paths, `aliases()`),
-   `open_fleet` (an in-memory DuckDB, the members attached read-only, then external
+1. `duckflock_core.flock`: `FlockSelection` (1 to 50 distinct rel_paths, `aliases()`),
+   `open_flock` (an in-memory DuckDB, the members attached read-only, then external
    access off and the configuration locked, then one union view per table name with a
-   `database` column), `fleet_tables`, `run_fleet_query`, `export_fleet_query`. A member
+   `database` column), `flock_tables`, `run_flock_query`, `export_flock_query`. A member
    that cannot be attached is an `AttachFailure` (locked, encrypted, corrupt, missing, ...)
-   and the others still work. Every fleet connection has its own temp folder
-   `<cache>/tmp/<pid>/fleet-<8 hex>`, removed when it closes.
+   and the others still work. Every flock connection has its own temp folder
+   `<cache>/tmp/<pid>/flock-<8 hex>`, removed when it closes.
 2. `UNION ALL BY NAME` does not fail when the view is created, whatever the column
    types: it fails when rows are read (`Unimplemented type for cast`), which neither
    `LIMIT 0` nor a probe with NULL constants shows. A column whose types differ across the
    members and are not all numeric or all temporal is therefore cast to VARCHAR up front
    (`UnionView.casts`); the plan's retry on a `BinderException` stays as a safety net (D-044).
 3. A member table with its own `database` column breaks the union binder (duplicate
-   names), so that view labels with `duckfleet_database` (`UnionView.label_column`, D-044).
+   names), so that view labels with `duckflock_database` (`UnionView.label_column`, D-044).
 4. `query.classify_error`: an INSERT, UPDATE or DELETE on a view (the union views of a
-   fleet) is `read_only`; `execute_limited` and `export_query` are split into reusable parts
+   flock) is `read_only`; `execute_limited` and `export_query` are split into reusable parts
    (`fetch_arrow`, `write_arrow`, `require_export_format`).
 
 ## 0.3.1 (2026-11-08)
 
 Fixes from `docs/REVIEW_v0.3.md` (plan: Phase 0 of `docs/PLAN_v0.4.md`, decisions
-D-042 and D-043). The demo fleet and its default numbers are unchanged. Also in
+D-042 and D-043). The demo flock and its default numbers are unchanged. Also in
 this release: `docs/REVIEW_v0.3.md` (review of 0.3.0), `docs/PLAN_v0.4.md` (plan for
 0.3.1 and v0.4), decisions D-040 to D-042, limit L-22 (planning documents only).
 
@@ -364,7 +444,7 @@ after the 0.2.1 review fixes below.
 
 ### What it does
 
-1. **Plot page** (`duckfleet-ui`): pick a database and a table, a chart kind
+1. **Plot page** (`duckflock-ui`): pick a database and a table, a chart kind
    (line, scatter, histogram, bar), x (temporal columns first, numeric next,
    or the row order), y columns, a colour column for series, an SQL filter and
    the point budget. DuckDB reduces the data (time buckets with mean, min and
@@ -375,14 +455,14 @@ after the 0.2.1 review fixes below.
    column, the min to max band at 20 % opacity. The page shows a caption about
    the reduction, the plotted data as a table, a CSV download and the SQL.
 2. **Plot this table** on the Database page hands the table over.
-3. **CLI** `duckfleet plot ROOT DATABASE SCHEMA.TABLE --kind ...` prints the
+3. **CLI** `duckflock plot ROOT DATABASE SCHEMA.TABLE --kind ...` prints the
    same reduced data as CSV or JSON, a summary line on stderr and, with
    `--show-sql`, the query (D-037).
-4. **Core**: `duckfleet_core.plotdata` (`PlotSpec`, `plan_plot`, `build_sql`,
-   `fetch_plot_data`, `PlotData`); `duckfleet_ui.charts` holds the colours,
+4. **Core**: `duckflock_core.plotdata` (`PlotSpec`, `plan_plot`, `build_sql`,
+   `fetch_plot_data`, `PlotData`); `duckflock_ui.charts` holds the colours,
    the template and the Plotly figures.
-5. `duckfleet make-demo --big` adds `exp_04/run_01/metrics.duckdb` (200,000
-   `events` rows over 30 days); without the flag the demo fleet is unchanged.
+5. `duckflock make-demo --big` adds `exp_04/run_01/metrics.duckdb` (200,000
+   `events` rows over 30 days); without the flag the demo flock is unchanged.
 
 ### Acceptance checklist (plan Section 8)
 
@@ -400,13 +480,13 @@ after the 0.2.1 review fixes below.
    timeout of 1 s set together with Run (`test_the_timeout_option_stops_a_runaway_query_and_the_next_one_runs`);
    the preview shows a row inserted after the scan
    (`test_preview_shows_rows_added_after_the_scan`).
-3. [x] `duckfleet plot ./demo-fleet exp_01/run_01/metrics.duckdb main.events
+3. [x] `duckflock plot ./demo-flock exp_01/run_01/metrics.duckdb main.events
    --kind line --x ts --y value --max-points 100 --format csv` prints 56
    bucketed rows (a header and 56 rows, fewer than 100), the stderr summary says
    `strategy=time_bucket bucket=3 hours points=56 rows_scanned=1000`;
    `--show-sql` prints `SELECT time_bucket(INTERVAL '3 hours', "ts") ...`.
-4. [x] UI. Windows, by hand in the built-in browser with `duckfleet-ui` (dark
-   theme, detected automatically) on a freshly generated `make-demo --big` fleet
+4. [x] UI. Windows, by hand in the built-in browser with `duckflock-ui` (dark
+   theme, detected automatically) on a freshly generated `make-demo --big` flock
    scanned from the sidebar: Plot page, `main.events` of
    `exp_01/run_01/metrics.duckdb`: a line chart raw ("1,000 points, every one of
    1,000 rows"); the same with max points 100 ("56 points from 1,000 rows:
@@ -463,7 +543,7 @@ D-035, item 4 in D-037, item 5 in D-036 (summary in D-039).
 2. In the browser only the dark theme and the single-panel layout were seen;
    the light theme and the panels are checked through the figures in the tests.
 3. The numbers marked (TBC) in `docs/LIMITS.md` and the tuning points (bucket
-   ladder, series cap, panel ratio) are untested on a real fleet.
+   ladder, series cap, panel ratio) are untested on a real flock.
 4. Open options (docs/ROADMAP.md): an HTML export of a chart from the CLI, log
    axes, zoom that refetches finer buckets, saved plot specs, annotations,
    Datashader.
@@ -472,12 +552,12 @@ D-035, item 4 in D-037, item 5 in D-036 (summary in D-039).
 ## 0.2.1 (2026-11-08)
 
 Fixes from `docs/REVIEW_v0.2.md` (plan: Phase 0 of `docs/PLAN_v0.3.md`, decision
-D-031). The demo fleet and its scan numbers are unchanged.
+D-031). The demo flock and its scan numbers are unchanged.
 
 ### Fixes, by review ID
 
 1. **V-01** (high): DuckDB's temp directory is `<cache dir>/tmp/<pid>` on every
-   connection duckfleet opens (query layer, profiler, catalog writer), no longer
+   connection duckflock opens (query layer, profiler, catalog writer), no longer
    `<database path>.tmp` beside the scanned file. The folder is per process,
    created before connecting, removed at exit; `run_scan` removes folders of
    processes that no longer exist. Found on the way: DuckDB refuses the temp
@@ -532,13 +612,13 @@ on both OSes afterwards (run 42218976791).
 
 ## 0.2.0 (2026-11-06)
 
-Database deep dive and read-only SQL on top of the fleet overview (plan:
+Database deep dive and read-only SQL on top of the flock overview (plan:
 `docs/PLAN_v0.2.md`), after the 0.1.1 review fixes below.
 
 ### What it does
 
-1. **Database page** (`duckfleet-ui`): pick one database of the scanned
-   fleet; its tables with row counts and time windows; per table the columns
+1. **Database page** (`duckflock-ui`): pick one database of the scanned
+   flock; its tables with row counts and time windows; per table the columns
    with the scan's cheap statistics, a per-column summary (DuckDB
    `SUMMARIZE`, computed on request, cached as JSON sidecars until the file
    changes) and a paged, sortable preview with a column selector. **Open in
@@ -546,9 +626,9 @@ Database deep dive and read-only SQL on top of the fleet overview (plan:
 2. **SQL page**: a read-only, sandboxed editor on one database (no writes, no
    file access, no extensions, no `SET`), a row limit, a timeout enforced with
    `interrupt()`, CSV and Parquet downloads and a history of 20 queries.
-3. **CLI**: `duckfleet sql`, `summarize`, `preview`.
-4. **Core**: `duckfleet_core.query` (sandboxed connections, `run_query`,
-   `export_query`, `preview_table`), `duckfleet_core.summary`,
+3. **CLI**: `duckflock sql`, `summarize`, `preview`.
+4. **Core**: `duckflock_core.query` (sandboxed connections, `run_query`,
+   `export_query`, `preview_table`), `duckflock_core.summary`,
    `store.SummaryStore`; `pytz` is a core dependency, `pyarrow` the optional
    extra `export`.
 
@@ -560,21 +640,21 @@ Database deep dive and read-only SQL on top of the fleet overview (plan:
    OSes, confirmed after the entry was written.
 2. [x] Phase 0: the demo scan reports 16 walked, 13 candidates, 2 rejected, 10
    ok, 3 failed (`corrupt`, `corrupt`, `encrypted`), families unchanged (checked
-   with the CLI on a fresh demo fleet); the `infinity` test passes
-   (`test_infinite_timestamps_never_open_a_time_window`); `duckfleet scan
+   with the CLI on a fresh demo flock); the `infinity` test passes
+   (`test_infinite_timestamps_never_open_a_time_window`); `duckflock scan
    --tag-pattern "("` exits 1 with `invalid tag pattern '(': missing ),
    unterminated subpattern at position 0`; the AppTest with 72 patched CPUs
    renders (`test_the_page_renders_on_a_machine_with_72_cpus`).
-3. [x] `duckfleet sql ./demo-fleet exp_01/run_01/metrics.duckdb "select
+3. [x] `duckflock sql ./demo-flock exp_01/run_01/metrics.duckdb "select
    count(*) from events"` prints 1000; an `INSERT` exits 3 with `read_only`; a
    `COPY ... TO` exits 3 with `blocked` and writes no file.
-4. [x] `duckfleet summarize ./demo-fleet exp_01/run_01/metrics.duckdb
+4. [x] `duckflock summarize ./demo-flock exp_01/run_01/metrics.duckdb
    main.events` prints 3 column rows with min, max, avg and quantiles; the
    second call prints `(cached <time>)`; `--refresh` recomputes.
-5. [x] `duckfleet preview ... main.events --rows 5 --offset 5 --order-by ts
+5. [x] `duckflock preview ... main.events --rows 5 --offset 5 --order-by ts
    --desc` prints 5 rows in descending time order.
-6. [x] UI. Windows, by hand in the built-in browser with `duckfleet-ui` on the
-   demo fleet: Overview, Load existing catalog, Database page for
+6. [x] UI. Windows, by hand in the built-in browser with `duckflock-ui` on the
+   demo flock: Overview, Load existing catalog, Database page for
    `exp_01/run_01/metrics.duckdb` with 2 tables, the Columns tab (null share
    0 %), a Summary that was computed (and recomputed) and shows the same
    `computed` time after leaving and returning to the page, a Preview sorted
@@ -617,7 +697,7 @@ Database deep dive and read-only SQL on top of the fleet overview (plan:
 
 1. Linux: no manual browser session, only AppTest in CI (WSL has no uv).
 2. The numbers marked (TBC) in `docs/LIMITS.md` and the tuning points are
-   untested on a real fleet; summaries of tables above the sampling threshold
+   untested on a real flock; summaries of tables above the sampling threshold
    are tested with a low threshold only.
 3. `incompatible_version` is still classified by message only.
 4. UI details: the Summary tab shows "Compute summary" until the next rerun
@@ -634,7 +714,7 @@ Database deep dive and read-only SQL on top of the fleet overview (plan:
    editor, **Run** and **Clear**, an expander **Options** (max rows shown, timeout
    in seconds), a result grid with a caption (seconds, rows shown, number of
    statements) and a warning when the result was cut. Errors show the kind and
-   DuckDB's message with a hint: `read_only` (duckfleet opens databases
+   DuckDB's message with a hint: `read_only` (duckflock opens databases
    read-only), `blocked` (file access, extensions and settings are disabled),
    `timeout` (raise the timeout or narrow the query).
 2. **Prepare CSV** and **Prepare Parquet** run the text in the editor through
@@ -656,7 +736,7 @@ Database deep dive and read-only SQL on top of the fleet overview (plan:
 
 1. `st.navigation` now has three pages (`nav.py`): Overview, Database, SQL.
    The Database page (`views/database.py`) shows one database of the scanned
-   fleet: header (size, families, tags, time window, health), the tables with
+   flock: header (size, families, tags, time window, health), the tables with
    row counts and time windows, and three tabs: **Columns** (scan statistics
    with the null share), **Summary** (a cached `SUMMARIZE`, computed on
    request, **Recompute** afterwards) and **Preview** (column selector, sort,
@@ -666,20 +746,20 @@ Database deep dive and read-only SQL on top of the fleet overview (plan:
    vanished since the scan is explained instead of failing; a file whose size
    or mtime differ from the catalog is marked "changed since the last scan".
 3. `query_access.py` (one `QueryConfig` per process, optional env overrides
-   `DUCKFLEET_QUERY_THREADS` and `DUCKFLEET_QUERY_MEMORY_MB`; cached preview
+   `DUCKFLOCK_QUERY_THREADS` and `DUCKFLOCK_QUERY_MEMORY_MB`; cached preview
    pages; summary helpers; result frames that never break the grid) and
    `common.py` (the helpers the Overview had, plus keeping widget state across
    pages). `views/sql.py` is a stub until Phase 5.
 4. `CatalogReader.database(rel_path)`.
 5. `streamlit>=1.66` (lazy tabs, D-028); `uv.lock` refreshed. The Overview's
    Workers and Max files defaults live in the session state.
-6. Checked by hand on Windows in the built-in browser (`duckfleet-ui`):
+6. Checked by hand on Windows in the built-in browser (`duckflock-ui`):
    Overview to Database to SQL through `st.switch_page`, the database
    selection survives the page changes, the summary computes and shows.
 
 ### Phase 3: CLI
 
-1. New commands `duckfleet sql ROOT DATABASE SQL`, `summarize ROOT DATABASE
+1. New commands `duckflock sql ROOT DATABASE SQL`, `summarize ROOT DATABASE
    SCHEMA.TABLE` and `preview ROOT DATABASE SCHEMA.TABLE` (module
    `cli_query.py`). `DATABASE` is the `rel_path` listed by `report`; the
    absolute path comes from the catalog. Output as an aligned table, CSV or
@@ -691,7 +771,7 @@ Database deep dive and read-only SQL on top of the fleet overview (plan:
 
 ### Phase 2: summaries
 
-1. `duckfleet_core.summary`: `ColumnSummary`, `TableSummary` (schema version
+1. `duckflock_core.summary`: `ColumnSummary`, `TableSummary` (schema version
    1) and `summarize_table` (DuckDB `SUMMARIZE`, on a sample above
    `stats_row_threshold` rows, under the query timeout). A failure becomes a
    summary with `error` set instead of an exception.
@@ -706,7 +786,7 @@ Database deep dive and read-only SQL on top of the fleet overview (plan:
 
 ### Phase 1: query layer
 
-1. `duckfleet_core.query`: `QueryConfig`, `connection_config`, `open_readonly`
+1. `duckflock_core.query`: `QueryConfig`, `connection_config`, `open_readonly`
    (read-only, extension autoload off, external access off, configuration
    locked, fixed threads and memory), `run_query`, `export_query` (CSV and
    Parquet in memory through Arrow), `preview_table`, `table_columns`,
@@ -754,11 +834,11 @@ features. Review IDs in brackets.
    error `temporal value outside the supported range in column <name>`, its
    window is cleared, and the database gets `table_error:<schema>.<table>`.
 6. [R-06] The cache directory is no longer walked, so a `--cache-dir` inside
-   the root does not turn the catalog into a fleet member.
+   the root does not turn the catalog into a flock member.
 7. [R-07] The catalog writer connects with the standard settings (2 threads,
    1 GB, extension autoload off).
 8. [R-08] The Overview timeline draws a single-instant window with a minimum
-   width (the larger of 1 hour and 0.5 % of the fleet span), the hover text
+   width (the larger of 1 hour and 0.5 % of the flock span), the hover text
    says "single instant", and the caption lists those databases.
 9. [R-09] A scan subprocess that exits 0 without a `finished` event is
    reported as such, and stray stdout lines appear in the log expander.
@@ -771,13 +851,13 @@ features. Review IDs in brackets.
 
 ### Documentation corrections
 
-1. [R-11] An `encrypted` fixture is producible: the demo fleet has
+1. [R-11] An `encrypted` fixture is producible: the demo flock has
    `secure/encrypted.duckdb` and a test asserts `error.type == "encrypted"`.
    D-018, F-SCAN-09 and the 0.1.0 open item 1 are corrected.
 2. [R-12] `docs/LIMITS.md` L-02 and `docs/ARCHITECTURE.md` Section 3 state the
    cap of 61 workers.
 3. [R-13] The plan's Phase 4 test text (a second run reuses every profile)
-   cannot hold for the demo fleet because failed files are retried; the test
+   cannot hold for the demo flock because failed files are retried; the test
    asserts 10 reused and the failed files re-profiled, with no timing (noted
    under 0.1.0 deviations).
 4. [R-14] `docs/ARCHITECTURE.md` Section 4: cache path wording (D-015) and
@@ -791,9 +871,9 @@ features. Review IDs in brackets.
 8. `docs/REVIEW_v0.1.md`, `docs/PLAN_v0.2.md`, decisions D-019 to D-024, limits
    L-09 revised and L-14 to L-17 added (written before the fixes).
 
-### Demo fleet
+### Demo flock
 
-The demo fleet now has 16 files walked, 13 candidates, 2 rejected, 10 ok and
+The demo flock now has 16 files walked, 13 candidates, 2 rejected, 10 ok and
 3 failed (`corrupt` twice, `encrypted`); families unchanged. Two files were
 added (`broken/highbit.duckdb`, `secure/encrypted.duckdb`; the latter leaves
 no `.wal` sibling). Every test and document that stated the old numbers (14,
@@ -812,22 +892,22 @@ no `.wal` sibling). Every test and document that stated the old numbers (14,
 ## 0.1.0 (2026-11-04)
 
 First usable version: scan a folder tree of DuckDB files and explore it as
-one fleet (plan: `docs/PLAN_v0.1.md`).
+one flock (plan: `docs/PLAN_v0.1.md`).
 
 ### What it does
 
-1. `duckfleet scan ROOT`: finds every DuckDB file (extension plus header
+1. `duckflock scan ROOT`: finds every DuckDB file (extension plus header
    magic, so SQLite files are rejected), profiles each one read-only in a
    spawn process pool (`max(1, cpu_count - 2)` workers, one DuckDB thread and
    a memory cap each), writes one JSON profile per file into the user cache
    and builds a DuckDB catalog from the profiles. Rescans reuse the profiles
    of unchanged files and retry failed ones.
-2. `duckfleet report ROOT` (text or Markdown), `duckfleet make-demo DIR`,
-   `duckfleet paths ROOT`.
+2. `duckflock report ROOT` (text or Markdown), `duckflock make-demo DIR`,
+   `duckflock paths ROOT`.
 3. Schema fingerprints (strict: names and types, loose: names only, column
    order ignored), families, per-table variants, a diff of two databases or
    families, time windows, health flags, classified errors, path-token tags.
-4. `duckfleet-ui`: Streamlit Overview page (sidebar scan, metrics, fleet
+4. `duckflock-ui`: Streamlit Overview page (sidebar scan, metrics, flock
    table, families and matrix, table variants, diff, timeline, health,
    rejected files).
 
@@ -835,7 +915,7 @@ one fleet (plan: `docs/PLAN_v0.1.md`).
 
 1. [x] CI green on Windows and Linux for every phase commit (1 to 6); the
    result for the 0.1.0 commit is in the GitHub Actions run of that commit.
-2. [x] `make-demo` + `scan` of the demo fleet: 14 files walked, 11
+2. [x] `make-demo` + `scan` of the demo flock: 14 files walked, 11
    candidates, 2 rejected, 10 ok, 1 failed (`corrupt`); a second scan reuses
    10 profiles and retries the failed one (checked with a fresh cache
    directory on Windows, also asserted by `test_cli.py` and
@@ -847,7 +927,7 @@ one fleet (plan: `docs/PLAN_v0.1.md`).
 4. [x] Lock test (`test_profiler.py`, also end to end in
    `test_coordinator.py`): a file held by a writer process is `locked`, green
    on Windows and Linux CI.
-5. [x] Windows: `duckfleet-ui`, demo fleet scanned from the sidebar in the
+5. [x] Windows: `duckflock-ui`, demo flock scanned from the sidebar in the
    built-in browser: progress visible, all sections rendered without an
    exception (8 metrics, 10 tables, the timeline with 4 family traces), a
    full rescan (11 profiled) and a cached load in a fresh session worked.
@@ -881,31 +961,31 @@ Also checked: the UI tests pass with pandas 2.2.3 as well as 3.1.1.
    (LIMITS 15, 16).
 6. Timestamps with a time zone are converted to UTC in SQL (no `pytz`
    dependency, LIMITS 13).
-7. The default cache directory is `user_cache_dir("duckfleet", appauthor=False)`
+7. The default cache directory is `user_cache_dir("duckflock", appauthor=False)`
    (D-015); `streamlit>=1.50` (the page uses `width="stretch"`).
 8. The profiler never opens a file whose header lacks the DuckDB magic, also
    when called directly.
 9. The plan's Phase 4 test text (a second run reuses every profile) cannot
-   hold for the demo fleet because the corrupt file is retried; the test
+   hold for the demo flock because the corrupt file is retried; the test
    asserts 10 of 11 reused and no timing (R-13).
 
 ### Open after 0.1.0
 
 1. `incompatible_version` and `encrypted` are classified by message only; no
    fixture exists (plan Section 10 item 2). *Corrected in 0.1.1:* an
-   `encrypted` fixture is producible and part of the demo fleet (R-11);
+   `encrypted` fixture is producible and part of the demo flock (R-11);
    `incompatible_version` stays unverified.
 2. `st.navigation` is not exercised by AppTest; the page function is.
 3. Numbers marked (TBC) in `docs/LIMITS.md` and the tuning points in
-   `docs/TUNING.md` are untested on a real fleet.
+   `docs/TUNING.md` are untested on a real flock.
 4. Open options discovered while building: `docs/ROADMAP.md` items 13 and 14.
 
 ### Build log by phase
 
 ### Phase 0 (2026-11-04)
 
-1. uv workspace with two packages: `duckfleet-core` (duckdb, pydantic,
-   platformdirs, psutil) and `duckfleet-ui` (streamlit, plotly, pandas,
+1. uv workspace with two packages: `duckflock-core` (duckdb, pydantic,
+   platformdirs, psutil) and `duckflock-ui` (streamlit, plotly, pandas,
    pyarrow). Python 3.11 pinned. Placeholder tests and ruff pass.
 2. CI on Windows and Linux (`.github/workflows/ci.yml`).
 3. Documentation set: proposal, scope, feature matrix, limits, tuning,
@@ -921,7 +1001,7 @@ No tool functionality yet.
 1. `config.py` (`ScanConfig` with resolved workers, memory limit, cache dir),
    `discovery.py` (walk, header sniff, WAL sibling, `max_files` truncation),
    `tags.py` (path-token tags, TUNING `tag-patterns`).
-2. `demo.py` (`make_demo_fleet`) built in this phase, ahead of the plan's
+2. `demo.py` (`make_demo_flock`) built in this phase, ahead of the plan's
    Phase 5, because the Phase 1 and Phase 4 tests need real DuckDB files.
    `tags.py` came forward from Phase 3 because `ScanConfig` defaults to its
    patterns.
@@ -952,7 +1032,7 @@ No tool functionality yet.
    `SchemaMap` helpers and `diff_schemas` (`SchemaDiff`, `TableDiff`,
    `TypeChange`). Diffs and variants cover tables only; views are not
    fingerprinted (D-007).
-2. Tests in `test_families.py` (hand-built profiles and the demo fleet:
+2. Tests in `test_families.py` (hand-built profiles and the demo flock:
    strict families 3, 3, 2, 1; loose 6, 2, 1; `events` has 3 variants).
    Tests for the fingerprint primitives are in `test_fingerprint.py`.
 
@@ -976,8 +1056,8 @@ No tool functionality yet.
 1. `cli.py` (`scan`, `report`, `make-demo`, `paths`; exit codes 0, 1 usage,
    2 fatal; `--progress text|json|none`), `__main__.py` (guarded, so the spawn
    pool can re-import it), `report.py` (text and Markdown from the catalog).
-   `make_demo_fleet` was already in place since Phase 1.
-2. Checked by hand on Windows with the console script: `duckfleet make-demo`,
+   `make_demo_flock` was already in place since Phase 1.
+2. Checked by hand on Windows with the console script: `duckflock make-demo`,
    `scan` (11 candidates, 2 rejected, 10 ok, 1 failed, 22 workers = 24 CPUs
    minus 2), a second `scan` (10 reused, the corrupt file retried), `report`
    (strict families 3, 3, 2, 1; loose 6, 2, 1; `events` 3 variants; time
@@ -988,19 +1068,19 @@ No tool functionality yet.
 
 ### Phase 6: Streamlit Overview (2026-11-04)
 
-1. `duckfleet_ui`: `launch.py` (`duckfleet-ui`), `app.py` (`st.navigation`
+1. `duckflock_ui`: `launch.py` (`duckflock-ui`), `app.py` (`st.navigation`
    with the Overview page), `scan_runner.py` (scan as a subprocess, JSON-lines
    progress, stderr kept for the error expander), `catalog_access.py`
    (`st.cache_data` wrappers keyed by catalog path and mtime, a reader per
-   call), `views/overview.py` (sidebar, metrics, fleet table, families and
+   call), `views/overview.py` (sidebar, metrics, flock table, families and
    matrix, table variants, diff, timeline, health, rejected files).
 2. Tests: AppTest smoke tests on the wrapper script `_overview_app.py`
    (every section, session state, load and scan buttons, a complete
    Scan -> full rescan -> cached rescan flow with a real subprocess) and real
    subprocess tests of the scan runner. `st.navigation` itself is not
    exercised by AppTest; the page function is (plan Section 10 item 3).
-3. Manual run on Windows (built-in browser, `duckfleet-ui`): scan of the demo
-   fleet from the sidebar with live progress, full rescan (11 profiled),
+3. Manual run on Windows (built-in browser, `duckflock-ui`): scan of the demo
+   flock from the sidebar with live progress, full rescan (11 profiled),
    cached load in a fresh session, scan of a folder with a space and
    non-ASCII characters; all sections rendered, no exceptions.
 4. `streamlit>=1.50` (the page uses `width="stretch"`); lock file refreshed.

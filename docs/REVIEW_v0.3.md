@@ -23,7 +23,7 @@ medium or low. All fixes go into Phase 0 of `docs/PLAN_v0.4.md` and ship as
    green on `ubuntu-latest` and `windows-latest`.
 2. 585 tests pass and ruff is clean on Windows (Python 3.11.9, duckdb
    1.5.6, streamlit 1.66.1, plotly 7.1.0).
-3. Fresh demo fleet with `--big`: 17 walked, 14 candidates, 2 rejected, 3
+3. Fresh demo flock with `--big`: 17 walked, 14 candidates, 2 rejected, 3
    failed; `plot` buckets 1,000 rows to 3 hours (56 points) under a budget
    of 100 and 200,000 rows to 1 minute (43,200 points) under the default
    budget in 0.06 s; histogram and bar output as planned; a bad filter
@@ -41,7 +41,7 @@ medium or low. All fixes go into Phase 0 of `docs/PLAN_v0.4.md` and ship as
 
 ## 2. Confirmed findings
 
-Severity: high = a crash or a rule violation a real fleet can hit; medium
+Severity: high = a crash or a rule violation a real flock can hit; medium
 = a wrong result or message in a plausible situation; low = cosmetic,
 hygiene or documentation.
 
@@ -126,7 +126,7 @@ verified by hand for `plot`.
    `st.form` with a typed timeout honoured in one submission,
    `persist_state` everywhere with `keep()` gone, Prepare disabled when the
    editor differs; the review's documentation corrections applied.
-6. No module-level UI imports in core, no `duckfleet_ui` import; every
+6. No module-level UI imports in core, no `duckflock_ui` import; every
    `TUNING` marker has a row; versions 0.3.0 everywhere; README commands
    exist and run.
 

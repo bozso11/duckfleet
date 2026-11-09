@@ -1,7 +1,7 @@
 [project]
-name = "duckfleet-workspace"
-version = "0.4.1"
-description = "uv workspace root for duckfleet (core library + Streamlit UI)"
+name = "duckflock-explorer-workspace"
+version = "0.5.0"
+description = "uv workspace root for duckflock (core library + Streamlit UI)"
 requires-python = ">=3.11,<3.14"
 dependencies = []
 
@@ -12,13 +12,13 @@ package = false
 members = ["packages/*"]
 
 [tool.uv.sources]
-duckfleet-core = { workspace = true }
-duckfleet-ui = { workspace = true }
+duckflock-core = { workspace = true }
+duckflock-ui = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "duckfleet-core",
-    "duckfleet-ui",
+    "duckflock-core",
+    "duckflock-ui",
     "pytest>=8.3",
     "pytest-timeout>=2.3",
     "ruff>=0.6",
@@ -33,12 +33,12 @@ extend-exclude = [".venv"]
 select = ["E", "F", "I", "UP", "B"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["duckfleet_core", "duckfleet_ui"]
+known-first-party = ["duckflock_core", "duckflock_ui"]
 
 [tool.pytest.ini_options]
 testpaths = [
-    "packages/duckfleet-core/tests",
-    "packages/duckfleet-ui/tests",
+    "packages/duckflock-core/tests",
+    "packages/duckflock-ui/tests",
 ]
 timeout = 300
 addopts = "-ra"

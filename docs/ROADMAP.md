@@ -6,7 +6,7 @@ implementation and a `CHANGELOG.md` entry after. Feature IDs refer to
 
 Last updated: 2026-11-08.
 
-## v0.1 Scan + fleet overview (done, 2026-11-04)
+## v0.1 Scan + flock overview (done, 2026-11-04)
 
 Discovery with header check, parallel read-only profiling, profile cache,
 catalog, strict/loose/per-table fingerprints, families, family diff,
@@ -53,24 +53,24 @@ smaller items.
 
 ## v0.4 Cross-database (done, 2026-11-08: `docs/PLAN_v0.4.md`, result in `CHANGELOG.md` 0.4.0)
 
-A sandboxed in-memory fleet connection with the chosen databases attached
+A sandboxed in-memory flock connection with the chosen databases attached
 read-only and one union view per table (`database` column); a scope
 control on the SQL and Plot pages (one database or several, defaulting to
 the strict family); plots coloured by `database`; content fingerprints of
 small tables in the scan with an "Identical content" section; CLI
-`fleet-tables`, `fleet-sql`, `plot --databases/--family`. F-X-01..02,
-F-PLOT-04, F-FLEET-08.
+`flock-tables`, `flock-sql`, `plot --databases/--family`. F-X-01..02,
+F-PLOT-04, F-FLOCK-08.
 
 ## Open options (not scheduled)
 
 1. Non-blocking scan and scan cancel (F-SCAN-14, F-SCAN-15).
-2. Identity query run against every file (F-FLEET-09), once the metadata
+2. Identity query run against every file (F-FLOCK-09), once the metadata
    layout is known.
-3. Type normalisation for fingerprints (F-FLEET-10).
-4. Column search across the fleet (F-FLEET-11).
+3. Type normalisation for fingerprints (F-FLOCK-10).
+4. Column search across the flock (F-FLOCK-11).
 5. Report export to Markdown or HTML (F-CLI-02).
 6. Watch folder with automatic rescan (F-SCAN-17).
-7. SQLite, Parquet, CSV as fleet members (F-SCAN-19).
+7. SQLite, Parquet, CSV as flock members (F-SCAN-19).
 8. Encrypted DuckDB files (F-SCAN-18).
 9. Query cancel or timeout on the SQL page (F-DB-06); saved queries
    (F-DB-07).
