@@ -71,7 +71,10 @@ names and is not rewritten.
 3. [x] `duckflock-ui` starts (headless, port 8765). In the built-in browser the tab title, the
    Overview title and the sidebar header read "duckflock explorer". Only the start page was
    looked at by hand; the four pages render through AppTest in the suite.
-4. [ ] CI on `ubuntu-latest` and `windows-latest`: recorded below once the run has finished.
+4. [x] CI green on `ubuntu-latest` and `windows-latest` for the 0.5.0 commit `fa29ed2` (run
+   42698683179). The GitHub repository was renamed to `duckflock-explorer` after that run
+   (`gh repo rename`); `origin` points to the new URL and the old URL redirects. This entry's own
+   commit changes documentation only.
 
 ### Deviations from the plan (D-052)
 
