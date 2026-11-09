@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+1. `docs/PLAN_rename.md`: plan for the rename to duckflock-explorer (product name and the domain word "fleet" to "flock"), to ship as 0.5.0. Decision D-051.
+
 ## 0.4.1 (2026-11-08)
 
 Fixes from `docs/REVIEW_v0.4.md` (decision D-049; choices in D-050), shipped as one commit
